@@ -1,0 +1,21 @@
+{
+  "name": "arcade",
+  "version": "1.0.0",
+  "description": "Plateforme d'arcade multijoueur — moteur de salons temps réel (les jeux sont des modules indépendants).",
+  "type": "module",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "node --watch server/server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["arcade", "multijoueur", "socket.io", "salons", "plateforme"],
+  "author": "Manu",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  }
+}
