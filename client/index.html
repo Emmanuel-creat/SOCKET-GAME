@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Arcade — plateforme de jeux multijoueur entre amis" />
+  <title>Arcade — Jouez entre amis</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="/css/variables.css" />
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+  <link rel="stylesheet" href="/css/views.css" />
+</head>
+<body>
+  <!-- Fond animé (décoratif, non bloquant) -->
+  <div class="bg-glow" aria-hidden="true"></div>
+
+  <div id="app" class="app">
+    <!-- Barre latérale de navigation -->
+    <nav id="sidebar" class="sidebar" aria-label="Navigation principale">
+      <div class="sidebar__logo">
+        <span class="sidebar__logo-icon" aria-hidden="true">🕹️</span>
+        <span class="sidebar__logo-text">Arcade</span>
+      </div>
+
+      <ul class="sidebar__menu" role="menubar">
+        <li><button class="nav-btn" data-view="play" role="menuitem"><span aria-hidden="true">🎮</span> Jouer</button></li>
+        <li><button class="nav-btn" data-view="rooms" role="menuitem"><span aria-hidden="true">🚪</span> Salons</button></li>
+        <li><button class="nav-btn" data-view="players" role="menuitem"><span aria-hidden="true">👥</span> Joueurs</button></li>
+        <li><button class="nav-btn" data-modal="profile" role="menuitem"><span aria-hidden="true">🪪</span> Profil</button></li>
+        <li><button class="nav-btn" data-modal="settings" role="menuitem"><span aria-hidden="true">⚙️</span> Paramètres</button></li>
+        <li><button class="nav-btn nav-btn--danger" data-modal="quit" role="menuitem"><span aria-hidden="true">🚪</span> Quitter</button></li>
+      </ul>
+
+      <div id="sidebar-user" class="sidebar__user" hidden>
+        <span id="sidebar-user-avatar" class="sidebar__user-avatar"></span>
+        <div class="sidebar__user-meta">
+          <span id="sidebar-user-pseudo" class="sidebar__user-pseudo"></span>
+          <span id="sidebar-user-status" class="sidebar__user-status"></span>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Zone des vues : le Router remplit ces sections sans rechargement -->
+    <main id="views" class="views">
+      <section id="view-play" class="view" data-view-name="play" hidden></section>
+      <section id="view-rooms" class="view" data-view-name="rooms" hidden></section>
+      <section id="view-players" class="view" data-view-name="players" hidden></section>
+      <section id="view-room" class="view" data-view-name="room" hidden></section>
+      <section id="view-game" class="view view--game" data-view-name="game" hidden></section>
+    </main>
+  </div>
+
+  <!-- Conteneurs des systèmes transverses -->
+  <div id="notifications" class="notifications" role="status" aria-live="polite"></div>
+  <div id="modal-root"></div>
+
+  <!-- Client Socket.IO (servi automatiquement par le serveur) -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,134 @@
+/* ==========================================================================
+   Styles propres à chaque vue.
+   ========================================================================== */
+
+/* --- Vue Jouer : catalogue de jeux ---------------------------------------- */
+.games-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--gap-m);
+}
+
+.game-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+  transition: transform var(--t-med) var(--ease), box-shadow var(--t-med) var(--ease);
+}
+
+.game-card:hover { transform: translateY(-6px); box-shadow: var(--shadow-card), var(--shadow-glow); }
+
+.game-card__cover {
+  height: 130px;
+  display: grid;
+  place-items: center;
+  font-size: 3.2rem;
+  background:
+    radial-gradient(60% 90% at 50% 10%, rgba(124, 92, 255, 0.28), transparent),
+    rgba(0, 0, 0, 0.3);
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.game-card__body { padding: var(--gap-m); display: flex; flex-direction: column; gap: var(--gap-s); flex: 1; }
+.game-card__head { display: flex; align-items: center; justify-content: space-between; gap: var(--gap-s); }
+.game-card__name { font-family: var(--font-display); font-size: 1.05rem; font-weight: 700; margin: 0; }
+.game-card__desc { color: var(--text-dim); font-size: 0.88rem; margin: 0; flex: 1; }
+.game-card__meta { font-size: 0.8rem; color: var(--text-faint); }
+.game-card__dev-note { font-size: 0.8rem; color: var(--warning); font-style: italic; margin: 0; }
+
+/* --- Vue Salons -------------------------------------------------------------- */
+.rooms-toolbar { display: flex; gap: var(--gap-s); margin-bottom: var(--gap-m); flex-wrap: wrap; }
+
+.rooms-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--gap-m);
+}
+
+.room-card__head { display: flex; justify-content: space-between; align-items: center; gap: var(--gap-s); }
+.room-card__name { margin: 0; font-size: 1.05rem; }
+.room-card__meta { color: var(--text-dim); font-size: 0.85rem; margin: var(--gap-s) 0; display: flex; gap: var(--gap-m); }
+.room-card__code {
+  font-family: monospace;
+  font-size: 0.9rem;
+  letter-spacing: 0.2em;
+  color: var(--accent-2);
+}
+
+/* --- Vue Salon (intérieur) ----------------------------------------------------- */
+.room-layout {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: var(--gap-m);
+  height: calc(100vh - 64px - 110px);
+  min-height: 420px;
+}
+
+.room-main { display: flex; flex-direction: column; gap: var(--gap-m); min-height: 0; overflow-y: auto; }
+.room-side { display: grid; grid-template-rows: auto 1fr; gap: var(--gap-m); min-height: 0; }
+.room-side .chat { flex: 1; }
+
+.room-header { display: flex; align-items: center; justify-content: space-between; gap: var(--gap-s); flex-wrap: wrap; margin-bottom: var(--gap-m); }
+.room-header__infos { display: flex; align-items: baseline; gap: var(--gap-m); flex-wrap: wrap; }
+.room-header__actions { display: flex; gap: var(--gap-s); flex-wrap: wrap; }
+
+.code-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-xs);
+  padding: 6px 14px;
+  font-family: monospace;
+  font-size: 1rem;
+  letter-spacing: 0.25em;
+  color: var(--accent-2);
+  background: rgba(41, 211, 194, 0.1);
+  border: 1px dashed rgba(41, 211, 194, 0.4);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+
+.room-games-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--gap-s);
+}
+
+.game-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--gap-xs);
+  padding: var(--gap-s);
+  font: inherit;
+  color: var(--text);
+  text-align: center;
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-m);
+  cursor: pointer;
+  transition: transform var(--t-fast), border-color var(--t-fast);
+}
+
+.game-tile:hover:not(:disabled) { transform: translateY(-3px); border-color: var(--accent); }
+.game-tile:disabled { opacity: 0.45; cursor: not-allowed; }
+.game-tile.is-selected { border-color: var(--accent); background: rgba(124, 92, 255, 0.14); box-shadow: var(--shadow-glow); }
+.game-tile__icon { font-size: 1.9rem; }
+.game-tile__name { font-size: 0.82rem; font-weight: 600; }
+.game-tile__players { font-size: 0.72rem; color: var(--text-faint); }
+
+/* --- Écran de jeu ----------------------------------------------------------------- */
+.game-screen {
+  height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: var(--gap-l);
+}
+
+.game-screen__panel { text-align: center; max-width: 480px; }
+.game-screen__icon { font-size: 4rem; display: block; margin-bottom: var(--gap-s); }
+
+@media (max-width: 1000px) {
+  .room-layout { grid-template-columns: 1fr; height: auto; }
+  .room-side { grid-template-rows: auto minmax(320px, auto); }
+}

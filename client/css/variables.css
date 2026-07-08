@@ -1,0 +1,46 @@
+/* ==========================================================================
+   Design tokens — seule source des couleurs, espacements et rayons.
+   ========================================================================== */
+:root {
+  /* Palette sombre */
+  --bg-deep: #0b0d16;
+  --bg-surface: #12152300;
+  --glass: rgba(255, 255, 255, 0.055);
+  --glass-strong: rgba(255, 255, 255, 0.09);
+  --glass-border: rgba(255, 255, 255, 0.12);
+
+  /* Accents "néon arcade" */
+  --accent: #7c5cff;
+  --accent-2: #29d3c2;
+  --accent-gradient: linear-gradient(120deg, #7c5cff 0%, #29d3c2 100%);
+  --danger: #ff5c7a;
+  --warning: #ffb454;
+  --success: #46d68c;
+
+  /* Texte */
+  --text: #eef0fa;
+  --text-dim: #9aa0b8;
+  --text-faint: #616880;
+
+  /* Typographie */
+  --font-display: 'Sora', 'Segoe UI', system-ui, sans-serif;
+  --font-body: 'Inter', 'Segoe UI', system-ui, sans-serif;
+
+  /* Rayons et ombres */
+  --radius-s: 10px;
+  --radius-m: 16px;
+  --radius-l: 24px;
+  --shadow-card: 0 8px 32px rgba(0, 0, 0, 0.45);
+  --shadow-glow: 0 0 24px rgba(124, 92, 255, 0.35);
+
+  /* Espacements */
+  --gap-xs: 6px;
+  --gap-s: 12px;
+  --gap-m: 20px;
+  --gap-l: 32px;
+
+  /* Animations */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --t-fast: 150ms;
+  --t-med: 300ms;
+}
