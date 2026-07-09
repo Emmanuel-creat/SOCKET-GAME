@@ -1,0 +1,16 @@
+{
+  "id": "codenames",
+  "nom": "Codenames",
+  "version": "1.0.0",
+  "joueurs": { "min": 4, "max": 12 },
+  "architecture": "host-autoritaire",
+  "communication": "game:message (relais générique du moteur)",
+  "regles": {
+    "grille": "5×5 : 9 mots pour l'équipe qui commence, 8 pour l'autre, 7 neutres, 1 assassin",
+    "equipes": "2 équipes, 1 maître-espion + agents chacune",
+    "indice": "un seul mot (hors mots de la grille) + un nombre 0–9 (0 = essais illimités)",
+    "essais": "nombre + 1 maximum, au moins une désignation avant de passer",
+    "fin": "tous ses mots découverts = victoire ; assassin désigné = défaite immédiate",
+    "manches": "successives, équipe qui commence alternée, score de manches cumulé"
+  }
+}
