@@ -1,0 +1,10 @@
+{
+  "id": "petit-bac",
+  "nom": "Petit Bac",
+  "description": "Trouvez un mot par catégorie commençant par la lettre tirée. 10 manches, notation par le MJ.",
+  "emoji": "🔤",
+  "joueurs": { "min": 2, "max": 16 },
+  "version": "1.0.0",
+  "etat": "disponible",
+  "visible": true
+}
