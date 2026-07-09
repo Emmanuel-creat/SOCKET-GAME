@@ -36,6 +36,9 @@ export const EVENTS = Object.freeze({
   GAME_STARTED: 'game:started', // serveur -> membres : { gameId, context }
   GAME_END: 'game:end', // client(host ou module) -> serveur : { result }
   GAME_ENDED: 'game:ended', // serveur -> membres : { result }
+  // Relais générique de données de jeu pendant une partie. Le serveur ne lit
+  // jamais `data` : il route seulement (à un joueur ciblé, ou au reste du salon).
+  GAME_MESSAGE: 'game:message', // client <-> serveur : { to?, data } / reçu : { from, data }
 
   // --- Système ---
   SYS_NOTIFICATION: 'sys:notification', // serveur -> client : { type, message }

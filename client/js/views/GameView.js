@@ -32,6 +32,9 @@ export class GameView {
         ...context,
         me,
         socket: this.socket,
+        // Communication en jeu : envoi (ciblé ou diffusé) + abonnement aux messages.
+        sendMessage: (data, to = null) => this.socket.sendGameMessage(data, to),
+        onMessage: (handler) => bus.on('game:message', handler),
         // Le module signale la fin de partie : le serveur ramène tout le salon.
         onEnd: (result) => this.socket.endGame(result),
       });

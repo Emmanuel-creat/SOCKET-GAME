@@ -4,7 +4,7 @@
  * Aucune règle métier ici : uniquement de l'orchestration.
  */
 import { EVENTS } from '../../shared/events.js';
-import { GAME_STATE, LIMITS } from '../../shared/constants.js';
+import { GAME_STATE, LIMITS, ROOM_STATUS } from '../../shared/constants.js';
 import { sanitizeText, isValidChatMessage } from '../../shared/validation.js';
 
 export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRegistry }) {
@@ -208,6 +208,26 @@ export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRe
     lobby.broadcastRoomState(room);
     lobby.broadcastRooms();
     lobby.broadcastPlayers();
+  });
+
+  socket.on(EVENTS.GAME_MESSAGE, ({ to = null, data } = {}) => {
+    const user = requireUser();
+    const room = user && requireRoom(user);
+    if (!room) return;
+    if (room.status !== ROOM_STATUS.IN_GAME) return fail('NO_GAME_RUNNING', 'Aucune partie en cours.');
+    if (data === undefined) return;
+
+    const envelope = { from: user.id, data };
+    if (to) {
+      // Message ciblé (ex. : envoyer sa main privée à un joueur précis).
+      const target = users.getById(to);
+      if (!target || !room.has(target.id)) return fail('TARGET_NOT_IN_ROOM', 'Destinataire introuvable dans le salon.');
+      const targetSocket = io.sockets.sockets.get(target.socketId);
+      targetSocket?.emit(EVENTS.GAME_MESSAGE, envelope);
+    } else {
+      // Diffusion à tous les autres membres du salon.
+      socket.to(room.id).emit(EVENTS.GAME_MESSAGE, envelope);
+    }
   });
 
   socket.on(EVENTS.GAME_END, ({ result } = {}) => {

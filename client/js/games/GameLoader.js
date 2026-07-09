@@ -3,7 +3,10 @@
  *
  * CONTRAT DE MODULE (à respecter par chaque futur jeu) :
  *   export default {
- *     async mount(container, context) { ... },  // context : { room, players, me, socket, onEnd(result) }
+ *     async mount(container, context) { ... },
+ *     // context : { roomId, roomName, hostId, players, me, socket,
+ *     //             sendMessage(data, to?), onMessage(handler) -> unsubscribe,
+ *     //             onEnd(result) }
  *     async unmount() { ... },                  // nettoyage complet du jeu
  *   }
  *

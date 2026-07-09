@@ -58,6 +58,9 @@ export class SocketClient {
       if (result?.summary) bus.emit('notify', { type: 'success', message: result.summary });
     });
 
+    // Données de jeu relayées pendant une partie (le module de jeu s'y abonne).
+    s.on(EVENTS.GAME_MESSAGE, ({ from, data }) => bus.emit('game:message', { from, data }));
+
     s.on(EVENTS.SYS_NOTIFICATION, ({ type, message }) => bus.emit('notify', { type, message }));
     s.on(EVENTS.SYS_ERROR, ({ message }) => bus.emit('notify', { type: 'error', message }));
 
@@ -82,4 +85,6 @@ export class SocketClient {
 
   startGame() { this.socket.emit(EVENTS.GAME_START); }
   endGame(result) { this.socket.emit(EVENTS.GAME_END, { result }); }
+  /** Relais de données de jeu : `to` cible un joueur (id), sinon diffusion au salon. */
+  sendGameMessage(data, to = null) { this.socket.emit(EVENTS.GAME_MESSAGE, { to, data }); }
 }

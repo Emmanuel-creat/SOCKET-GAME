@@ -1,0 +1,17 @@
+{
+  "id": "tarot",
+  "nom": "Tarot",
+  "version": "1.0.0",
+  "joueurs": { "min": 3, "max": 4 },
+  "architecture": "host-autoritaire",
+  "communication": "game:message (relais générique du moteur)",
+  "regles": {
+    "contrats": ["Petite ×1", "Garde ×2", "Garde sans le chien ×4", "Garde contre le chien ×6"],
+    "seuils": { "0 bout": 56, "1 bout": 51, "2 bouts": 41, "3 bouts": 36 },
+    "primes": {
+      "petitAuBout": "±10 × multiplicateur",
+      "poignees": { "3 joueurs": [13, 15, 18], "4 joueurs": [10, 13, 15], "bonus": [20, 30, 40] },
+      "chelemNonAnnonce": 200
+    }
+  }
+}
