@@ -578,6 +578,18 @@ const CSS = `
 .tarot__player .tag { font-size: 0.68rem; padding: 2px 6px; border-radius: 99px; background: rgba(124,92,255,0.25); }
 .tarot__player .pts { margin-left: auto; font-variant-numeric: tabular-nums; }
 .tarot__log { font-size: 0.8rem; color: var(--text-dim, #aab); max-height: 220px; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
+.tarot__chat { display: flex; flex-direction: column; gap: 8px; }
+.tarot__chat-messages { display: flex; flex-direction: column; gap: 8px; max-height: 200px; overflow-y: auto; padding-right: 2px; }
+.tarot__chat-empty { color: var(--text-faint, #616880); font-size: 0.78rem; font-style: italic; text-align: center; padding: 6px 0; }
+.tarot__chat-msg { display: flex; gap: 8px; animation: tarot-msg-in .15s ease; }
+.tarot__chat-msg__avatar { font-size: 1.1rem; line-height: 1.5; }
+.tarot__chat-msg__head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.tarot__chat-msg__pseudo { font-weight: 600; font-size: 0.82rem; }
+.tarot__chat-msg__time { font-size: 0.68rem; color: var(--text-faint, #616880); }
+.tarot__chat-msg__text { margin: 1px 0 0; font-size: 0.85rem; color: var(--text-dim, #aab); overflow-wrap: anywhere; }
+.tarot__chat-form { display: flex; gap: 8px; }
+.tarot__chat-form input { flex: 1; min-width: 0; padding: 8px 10px; font: inherit; font-size: 0.85rem; color: var(--text, #e8ecff); background: rgba(0,0,0,0.35); border: 1px solid var(--glass-border, rgba(255,255,255,0.12)); border-radius: var(--radius-s, 10px); }
+@keyframes tarot-msg-in { from { opacity: 0; transform: translateY(4px); } }
 .tarot__status { min-height: 1.2em; color: var(--warning, #ffb454); font-size: 0.85rem; text-align: center; }
 .tarot table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .tarot td, .tarot th { padding: 4px 8px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.07); }
@@ -602,6 +614,11 @@ function h(tag, props = {}, children = []) {
 
 function symbolOf(info) {
   return info.type === 'couleur' ? SUITS[info.suit].sym : info.type === 'atout' ? '✦' : '★';
+}
+
+/** Horodatage court pour les messages du chat de table (ex. « 14:32 »). */
+function formatChatTime(timestamp) {
+  return new Date(timestamp).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 }
 
 function cardEl(id, { onClick = null, legal = true, selected = false } = {}) {
@@ -641,12 +658,14 @@ class TarotUI {
         return;
       }
       this.unsubscribe = this.ctx.onMessage(({ from, data }) => {
-        if (data?.t === 'action') this.hostHandle(from, data.action);
+        if (data?.t === 'chat') this.receiveChat(from, data);
+        else if (data?.t === 'action') this.hostHandle(from, data.action);
       });
       this.engine.startDonne();
       this.broadcast();
     } else {
       this.unsubscribe = this.ctx.onMessage(({ from, data }) => {
+        if (data?.t === 'chat') { this.receiveChat(from, data); return; }
         if (from !== this.ctx.hostId) return;
         if (data?.t === 'view') this.render(data.view);
         else if (data?.t === 'error') this.setStatus(data.message);
@@ -697,6 +716,71 @@ class TarotUI {
     this.root.replaceChildren(h('div', { className: 'tarot__panel', style: 'margin:auto;' }, text));
   }
 
+  /* -------- chat de table (diffusion via game:message, indépendant du Host) -------- */
+
+  /** Construit le panneau une seule fois : conservé (et réinséré) à chaque rendu. */
+  ensureChatPanel() {
+    if (this.chatPanel) return this.chatPanel;
+    this.chatEmptyEl = h('div', { className: 'tarot__chat-empty' }, 'Aucun message pour l\'instant.');
+    this.chatMessagesEl = h('div', {
+      className: 'tarot__chat-messages', tabindex: '0', 'aria-label': 'Messages de la table',
+    }, [this.chatEmptyEl]);
+    this.chatInput = h('input', {
+      type: 'text', placeholder: 'Écrire à la table…', maxlength: '300', 'aria-label': 'Votre message',
+    });
+    const form = h('form', { className: 'tarot__chat-form' }, [
+      this.chatInput,
+      h('button', { className: 'btn btn--primary btn--small', type: 'submit' }, 'Envoyer'),
+    ]);
+    form.addEventListener('submit', (e) => { e.preventDefault(); this.sendChat(); });
+    this.chatPanel = h('div', { className: 'tarot__panel tarot__chat' }, [
+      h('strong', {}, '💬 Chat'),
+      this.chatMessagesEl,
+      form,
+    ]);
+    return this.chatPanel;
+  }
+
+  /** Envoi : écho local immédiat (la diffusion serveur n'inclut pas l'expéditeur) + relais aux autres. */
+  sendChat() {
+    const text = this.chatInput.value.trim();
+    if (!text) return;
+    this.appendChatMessage({
+      pseudo: this.ctx.me.pseudo, avatar: this.ctx.me.avatar, color: this.ctx.me.color, at: Date.now(), text,
+    });
+    this.ctx.sendMessage({ t: 'chat', text }, null);
+    this.chatInput.value = '';
+    this.chatInput.focus();
+  }
+
+  /** Réception d'un message diffusé par un autre joueur (host ou non). */
+  receiveChat(from, data) {
+    const text = String(data?.text ?? '').slice(0, 500).trim();
+    if (!text) return;
+    const player = this.ctx.players.find((p) => p.id === from);
+    this.appendChatMessage({
+      pseudo: player?.pseudo ?? '?', avatar: player?.avatar ?? '❔', color: player?.color, at: Date.now(), text,
+    });
+  }
+
+  appendChatMessage(message) {
+    this.ensureChatPanel();
+    if (this.chatEmptyEl) { this.chatEmptyEl.remove(); this.chatEmptyEl = null; }
+    const list = this.chatMessagesEl;
+    const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 60;
+    list.append(h('div', { className: 'tarot__chat-msg' }, [
+      h('span', { className: 'tarot__chat-msg__avatar', 'aria-hidden': 'true' }, message.avatar ?? '🎴'),
+      h('div', {}, [
+        h('div', { className: 'tarot__chat-msg__head' }, [
+          h('span', { className: 'tarot__chat-msg__pseudo', style: message.color ? `color:${message.color};` : '' }, message.pseudo),
+          h('span', { className: 'tarot__chat-msg__time' }, formatChatTime(message.at)),
+        ]),
+        h('p', { className: 'tarot__chat-msg__text' }, message.text),
+      ]),
+    ]));
+    if (nearBottom) list.scrollTop = list.scrollHeight;
+  }
+
   render(view) {
     this.view = view;
     if (view.phase !== 'ecart') this.ecartSelection.clear();
@@ -742,6 +826,7 @@ class TarotUI {
         h('strong', {}, 'Historique'),
         h('div', { className: 'tarot__log' }, [...view.log].reverse().map((l) => h('div', {}, l))),
       ]),
+      this.ensureChatPanel(),
       ...(this.isHost && view.phase !== 'fin-partie' && view.phase !== 'fin-donne'
         ? [h('button', { className: 'btn btn--ghost btn--small', onClick: () => this.confirmEnd() }, '🛑 Terminer la partie')]
         : []),

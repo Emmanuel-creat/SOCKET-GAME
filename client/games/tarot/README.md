@@ -21,6 +21,10 @@ Tarot français à **3 ou 4 joueurs**, complet : enchères, chien/écart, jeu de
 
 Le Host lance la partie depuis le salon (3 ou 4 joueurs requis). Chaque donne : enchères → écart éventuel → 18/24 plis → tableau des scores. Le Host enchaîne avec **« Donne suivante »** ou clôt avec **« Terminer la partie »** (classement final puis retour automatique au salon pour tous).
 
+## Chat de table
+
+Un panneau de discussion est intégré à la vue de jeu, juste sous le panneau « Historique ». Chaque message est diffusé à toute la table via le même relais générique `game:message` que les actions/vues (aucun lien avec le chat de salon, aucun changement côté moteur/serveur). Le fil est propre à la partie en cours : vide à chaque nouvelle partie, non conservé côté serveur.
+
 ## Limites connues
 
 - Le tarot à **5 joueurs** (appel du roi) n'est pas implémenté — `games.json` limite le salon à 3–4 joueurs.

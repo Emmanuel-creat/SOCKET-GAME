@@ -1,7 +1,7 @@
 {
   "id": "tarot",
   "nom": "Tarot",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "joueurs": { "min": 3, "max": 4 },
   "architecture": "host-autoritaire",
   "communication": "game:message (relais générique du moteur)",
