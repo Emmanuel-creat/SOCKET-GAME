@@ -1,0 +1,21 @@
+{
+  "id": "loup-garou",
+  "nom": "Loup-Garou",
+  "version": "1.0.0",
+  "joueurs": { "min": 5, "max": 16 },
+  "architecture": "host-autoritaire (le moteur joue le meneur : tout le monde participe)",
+  "communication": "game:message (relais générique du moteur, vues et infos ciblées)",
+  "roles": ["Villageois", "Loup-Garou", "Voyante", "Sorcière", "Chasseur", "Cupidon", "Petite Fille", "Salvateur", "Corbeau", "Capitaine (fonction)"],
+  "chats": {
+    "village": "jour, vivants (lisible par tous)",
+    "loups": "nuit, loups — lisible par la Petite Fille sous pseudos masqués (risque 25 %/nuit d'être démasquée)",
+    "amoureux": "privé aux deux amoureux",
+    "morts": "spectateurs, voient tous les rôles"
+  },
+  "regles": {
+    "nuit": "ordre d'appel : Cupidon (nuit 1) → Salvateur → Voyante → Loups (vote de meute) → Sorcière → Corbeau",
+    "jour": "annonce des morts (rôles révélés) → élection du Capitaine (jour 1) → débat au chat → vote (Capitaine ×2, Corbeau +2), égalité = personne d'éliminé",
+    "cascades": "amoureux mort de chagrin, tir du Chasseur, succession du Capitaine",
+    "victoires": "village (plus aucun loup), loups (majorité), amoureux de camps opposés (derniers survivants)"
+  }
+}
