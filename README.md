@@ -1,8 +1,8 @@
-# 🕹️ Arcade — Plateforme de jeux multijoueur
+# MEDGAME — Plateforme de jeux multijoueur
 
 Plateforme d'arcade multijoueur en temps réel : profils, salons, chat, invitation par code, sélection et lancement de jeux. **La plateforme ne contient aucun jeu** — c'est un moteur : les jeux sont des modules indépendants, chargés dynamiquement.
 
-## 🚀 Démarrage
+## Démarrage
 
 ```bash
 npm install
@@ -11,13 +11,13 @@ npm start        # ou : npm run dev (rechargement auto)
 
 Puis ouvrir **http://localhost:3000** (variable d'environnement `PORT` pour changer le port).
 
-## 🧱 Stack
+## Stack
 
 - **Client** : HTML5, CSS3, JavaScript ES6 Modules — aucun framework
 - **Serveur** : Node.js (≥ 18), Express, Socket.IO
 - **Partagé** : constantes, événements et validation communs (`/shared`)
 
-## 📂 Architecture
+## Architecture
 
 ```text
 arcade/
@@ -52,7 +52,7 @@ arcade/
 - **Validation partagée** (`shared/validation.js`) : retour immédiat côté client, autorité côté serveur.
 - **Sécurité DOM** : tout le rendu passe par `el()` (pas d'`innerHTML` sur des données utilisateur).
 
-## 🎮 Fonctionnalités
+## Fonctionnalités
 
 | Domaine | Détails |
 |---|---|
@@ -65,7 +65,7 @@ arcade/
 | Parties | lancement par le Host, chargement dynamique du module, retour automatique au salon |
 | Accessibilité | navigation clavier, focus visible, `prefers-reduced-motion`, responsive |
 
-## 🧩 Ajouter un jeu (sans toucher au moteur)
+## Ajouter un jeu (sans toucher au moteur)
 
 1. **Créer le dossier** `client/games/mon-jeu/` avec `index.js`, `config.json`, `README.md`, `assets/`.
 2. **Implémenter le contrat de module** dans `index.js` :
@@ -103,6 +103,6 @@ Host                    Serveur                     Membres du salon
                         ◀──────── game:ended ──────▶ retour automatique au salon
 ```
 
-## 🗺️ Jeux prévus
+## Jeux prévus
 
 20 jeux référencés (Loup-Garou, UNO, Skyjo, Belote, Codenames, Tarot, Among Us, Puissance 4, Morpion, Blind Test, Petit Bac, Quiz, Pendu, Dessin & Devine, Bataille Navale, Bomberman, Memory, Dominos, Échecs, Cache-Cache) + 5 emplacements réservés (`placeholder01` à `placeholder05`, masqués du catalogue via `"visible": false`). Tous en état **« En développement »** : leurs dossiers existent, leurs fichiers sont volontairement vides.
