@@ -1,0 +1,19 @@
+{
+  "id": "devine-tete",
+  "nom": "Le Dossier",
+  "version": "1.0.0",
+  "joueurs": { "min": 2, "max": 8 },
+  "architecture": "host-autoritaire",
+  "communication": "game:message (relais générique du moteur)",
+  "regles": {
+    "principe": "10 manches : une image altérée s'affiche, chacun tape le prénom de la personne, révélation quand tout le monde a répondu",
+    "modes": {
+      "caricature": "portrait caricaturé",
+      "modified": "visage déformé / pixellisé",
+      "cut": "photo coupée (50/50)"
+    },
+    "score": "1 point par bonne réponse (accents, casse et espaces ignorés)",
+    "images": "135 photos réparties en 5 personnes × 4 catégories, sans répétition tant que la réserve n'est pas épuisée"
+  },
+  "confidentialite": "URLs d'images anonymisées (identifiants opaques) : l'inspecteur réseau ne révèle pas la réponse"
+}
