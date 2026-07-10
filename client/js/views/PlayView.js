@@ -29,16 +29,16 @@ export class PlayView {
       games.length === 0
         ? el('div', { className: 'empty' }, [el('span', { className: 'empty__icon' }, ['🕹️']), 'Chargement du catalogue…'])
         : el('div', { className: 'games-grid' },
-            games.map((game) => GameCard(game, () => this.enterGame()))),
+            games.map((game) => GameCard(game, () => this.enterGame(game)))),
     );
   }
 
-  /** Un jeu disponible mène à la création d'un salon (cœur du flux plateforme). */
-  enterGame() {
+  /** Un jeu disponible mène à la création d'un salon pré-configuré avec ce jeu. */
+  enterGame(game) {
     if (store.get('room')) {
       bus.emit('app:navigate', 'room');
       return;
     }
-    openCreateRoomModal({ socket: this.socket });
+    openCreateRoomModal({ socket: this.socket, game });
   }
 }

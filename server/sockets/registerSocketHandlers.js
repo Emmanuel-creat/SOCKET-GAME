@@ -75,9 +75,18 @@ export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRe
     const { room, error } = rooms.create(user, payload);
     if (error) return fail('ROOM_CREATE_FAILED', error);
 
+    // Jeu présélectionné (flux « Jouer » → carte d'un jeu) : associé dès la
+    // création, même validation que room:setGame. Un id invalide est ignoré
+    // sans faire échouer la création.
+    if (payload.gameId) {
+      const sel = gameRegistry.canSelect(payload.gameId, room.players.length);
+      if (sel.ok) room.gameId = payload.gameId;
+    }
+
     socket.join(room.id);
     socket.emit(EVENTS.ROOM_JOINED, { room: room.toPublic((u) => users.toPublic(u)) });
-    notify('success', `Salon « ${room.name} » créé. Code : ${room.code}`);
+    const game = room.gameId ? gameRegistry.get(room.gameId) : null;
+    notify('success', `Salon « ${room.name} » créé${game ? ` pour ${game.nom}` : ''}. Code : ${room.code}`);
     lobby.broadcastRooms();
     lobby.broadcastPlayers();
   });

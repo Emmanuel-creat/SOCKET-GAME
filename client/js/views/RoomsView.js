@@ -14,11 +14,20 @@ export class RoomsView {
     this.socket = socket;
     this.container = document.getElementById('view-rooms');
     store.subscribe('rooms', () => this.render());
-    bus.on('view:activated:rooms', () => this.render());
+    bus.on('view:activated:rooms', () => {
+      // Déjà membre d'un salon : on rouvre directement l'intérieur du salon
+      // (l'état complet — joueurs, paramètres, chat — vit dans le store).
+      if (store.get('room')) {
+        bus.emit('app:navigate', 'room');
+        return;
+      }
+      this.render();
+    });
   }
 
   render() {
     if (this.container.hidden) return;
+    if (store.get('room')) return; // en salon : cette vue ne s'affiche pas
     const rooms = store.get('rooms');
     const games = store.get('games');
 

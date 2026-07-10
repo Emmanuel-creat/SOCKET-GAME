@@ -251,6 +251,30 @@ class LoupGarouUI {
       return S;
     }
 
+    // Pouvoirs déclenchés PAR la mort : leur interface passe avant l'écran de
+    // décès, sinon le joueur mort resterait bloqué et la partie avec lui.
+    if (view.phase === 'chasseur') {
+      if (view.iAmPendingHunter) {
+        S.push(h('h3', {}, '🏹 Votre dernier tir'),
+          h('div', { className: 'lg__hint' }, 'Vous mourrez ensuite — choisissez qui vous emportez dans la tombe.'),
+          this.targetButtons(view, { onPick: (id) => this.act({ a: 'shoot', target: id }) }));
+      } else {
+        S.push(h('h3', {}, '🏹 Le Chasseur arme son fusil…'));
+      }
+      return S;
+    }
+
+    if (view.phase === 'succession') {
+      if (view.iAmPendingCaptain) {
+        S.push(h('h3', {}, '🎖️ Désignez votre successeur'),
+          h('div', { className: 'lg__hint' }, 'Dernier devoir du Capitaine avant de rejoindre les morts.'),
+          this.targetButtons(view, { onPick: (id) => this.act({ a: 'successor', target: id }) }));
+      } else {
+        S.push(h('h3', {}, '🎖️ Le Capitaine désigne son successeur…'));
+      }
+      return S;
+    }
+
     if (!me?.alive) {
       S.push(h('h3', {}, '👻 Vous êtes mort'),
         h('div', { className: 'lg__hint' }, 'Vous voyez tous les rôles et pouvez discuter dans le canal des Morts. Interdiction formelle de spoiler les vivants par un autre moyen !'));
@@ -350,24 +374,6 @@ class LoupGarouUI {
           ]));
       } else {
         S.push(h('div', { className: 'lg__hint' }, '✅ Vote enregistré.'));
-      }
-      return S;
-    }
-
-    if (view.phase === 'chasseur') {
-      if (view.iAmPendingHunter) {
-        S.push(h('h3', {}, '🏹 Votre dernier tir'), this.targetButtons(view, { onPick: (id) => this.act({ a: 'shoot', target: id }) }));
-      } else {
-        S.push(h('h3', {}, '🏹 Le Chasseur arme son fusil…'));
-      }
-      return S;
-    }
-
-    if (view.phase === 'succession') {
-      if (view.iAmPendingCaptain) {
-        S.push(h('h3', {}, '🎖️ Désignez votre successeur'), this.targetButtons(view, { onPick: (id) => this.act({ a: 'successor', target: id }) }));
-      } else {
-        S.push(h('h3', {}, '🎖️ Le Capitaine désigne son successeur…'));
       }
       return S;
     }

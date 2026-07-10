@@ -1,7 +1,7 @@
 {
   "id": "loup-garou",
   "nom": "Loup-Garou",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "joueurs": { "min": 5, "max": 16 },
   "architecture": "host-autoritaire (le moteur joue le meneur : tout le monde participe)",
   "communication": "game:message (relais générique du moteur, vues et infos ciblées)",

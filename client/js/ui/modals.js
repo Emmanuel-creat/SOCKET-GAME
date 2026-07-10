@@ -96,13 +96,14 @@ export function openSettingsModal({ socket }) {
 }
 
 /** Création de salon. */
-export function openCreateRoomModal({ socket }) {
+export function openCreateRoomModal({ socket, game = null }) {
   const nameInput = el('input', {
     type: 'text', id: 'room-name', maxLength: LIMITS.ROOM_NAME_MAX,
-    placeholder: 'Ex. : La taverne de Manu',
+    placeholder: game ? `Ex. : ${game.nom} entre amis` : 'Ex. : La taverne de Manu',
   });
   const maxInput = el('input', {
-    type: 'number', id: 'room-max', value: 8,
+    type: 'number', id: 'room-max',
+    value: game ? Math.min(game.joueursMax, LIMITS.ROOM_PLAYERS_MAX) : 8,
     min: LIMITS.ROOM_PLAYERS_MIN, max: LIMITS.ROOM_PLAYERS_MAX,
   });
 
@@ -111,13 +112,21 @@ export function openCreateRoomModal({ socket }) {
       bus.emit('notify', { type: 'warning', message: `Le nom du salon doit faire ${LIMITS.ROOM_NAME_MIN} à ${LIMITS.ROOM_NAME_MAX} caractères.` });
       return;
     }
-    socket.createRoom({ name: nameInput.value, maxPlayers: Number(maxInput.value) });
+    socket.createRoom({
+      name: nameInput.value,
+      maxPlayers: Number(maxInput.value),
+      ...(game ? { gameId: game.id } : {}),
+    });
     modal.close();
   };
 
   const modal = new Modal({
-    title: 'Créer un salon',
+    title: game ? `Créer un salon — ${game.icone} ${game.nom}` : 'Créer un salon',
     content: [
+      ...(game ? [el('div', { className: 'field' }, [
+        el('span', { className: 'badge badge--disponible' },
+          [`${game.icone} ${game.nom} · ${game.joueursMin}–${game.joueursMax} joueurs — sera sélectionné automatiquement`]),
+      ])] : []),
       el('div', { className: 'field' }, [el('label', { htmlFor: 'room-name' }, ['Nom du salon']), nameInput]),
       el('div', { className: 'field' }, [el('label', { htmlFor: 'room-max' }, ['Nombre maximum de joueurs']), maxInput]),
     ],

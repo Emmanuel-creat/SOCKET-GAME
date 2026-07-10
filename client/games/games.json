@@ -10,7 +10,7 @@
       "joueursMin": 5,
       "joueursMax": 16,
       "etat": "disponible",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "auteur": "Manu",
       "module": "index.js",
       "chemin": "/games/loup-garou/",

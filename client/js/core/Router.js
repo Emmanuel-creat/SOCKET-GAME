@@ -31,7 +31,8 @@ export class Router {
       section.hidden = name !== view;
     }
     this.navButtons.forEach((btn) =>
-      btn.classList.toggle('is-active', btn.dataset.view === view),
+      btn.classList.toggle('is-active',
+        btn.dataset.view === view || (view === 'room' && btn.dataset.view === 'rooms')),
     );
     // La vue concernée peut se (re)construire à l'activation.
     bus.emit(`view:activated:${view}`);
