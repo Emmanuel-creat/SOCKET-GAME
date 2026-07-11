@@ -1,0 +1,15 @@
+{
+  "id": "memory",
+  "nom": "Memory",
+  "version": "1.0.0",
+  "joueurs": { "min": 2, "max": 6 },
+  "architecture": "host-autoritaire",
+  "communication": "game:message (relais générique du moteur)",
+  "regles": {
+    "plateau": "15 paires (30 cartes), mélange aléatoire à chaque partie",
+    "tour": "Le joueur actif retourne 2 cartes ; paire trouvée = +1 point et il rejoue, sinon le tour passe",
+    "delaiMismatch": "1.5s d'affichage avant de retourner les cartes non appariées",
+    "chrono": "Bouton chrono 10s (visible de tous) : passe automatiquement le tour si le joueur actif ne conclut pas à temps",
+    "finDePartie": "Quand les 15 paires sont trouvées, ou à tout moment via le bouton Host « Terminer la partie »"
+  }
+}
