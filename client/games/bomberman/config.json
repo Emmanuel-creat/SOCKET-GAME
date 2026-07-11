@@ -1,0 +1,17 @@
+{
+  "id": "bomberman",
+  "nom": "Bomberman",
+  "version": "1.0.0",
+  "joueurs": { "min": 2, "max": 8 },
+  "architecture": "host-autoritaire temps réel (boucle 60 ms chez le Host, état public diffusé)",
+  "communication": "game:message — entrées ciblées vers le Host, état diffusé à tous (aucune info privée)",
+  "regles": {
+    "arene": "17×13 : bordure + piliers indestructibles, ~62 % de briques, 8 apparitions dégagées (coins + milieux de bords)",
+    "bombes": "mèche 2,5 s, explosion en croix (portée bonus), stoppée par les murs, détruit les briques, chaînes",
+    "bonus": "30 % par brique : 💣 bombe max +1 (cap 8), 🔥 portée +1 (cap 10), ⚡ vitesse +1",
+    "deplacement": "case par case (cadence individuelle), lissé côté client ; on sort de sa bombe, on n'y revient pas",
+    "manche": "dernier survivant gagne, 3 min max (manche nulle sinon), enchaînement automatique",
+    "victoire": "premier à 3 manches gagnées"
+  },
+  "controles": "flèches / ZQSD / WASD + Espace (ou E) ; pavé tactile + bouton 💣 sur mobile"
+}
