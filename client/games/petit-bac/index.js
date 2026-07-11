@@ -1,23 +1,19 @@
 /**
  * Petit Bac — module de jeu pour la plateforme Arcade.
  *
- * Architecture « Host autoritaire » :
- *  - Le client du Host exécute le moteur pur (PetitBacEngine) : tirage des
- *    catégories, tirage des lettres, collecte des réponses, notation, cumul.
- *  - Les réponses privées ne quittent le joueur que vers le Host. Chaque client
- *    reçoit une vue personnalisée (getViewFor) : état public + ses propres champs.
- *  - Les clients envoient leurs actions au Host via context.sendMessage (relais
- *    générique game:message du moteur, qui ne lit jamais le contenu).
+ * Architecture « Host autoritaire » : le client du Host exécute le moteur pur
+ * (PetitBacEngine) et diffuse à chaque joueur une vue personnalisée. Les clients
+ * envoient leurs actions au Host via context.sendMessage (relais game:message).
  *
- * Contrat de module : export default { mount(container, context), unmount() }.
- * Le moteur (PetitBacEngine) et l'UI (PetitBacUI) sont exportés pour les tests.
+ * Résilience Host : hostId est relu en direct depuis context (context.hostId peut
+ * changer si la plateforme promeut un nouveau Host). Un watchdog détecte le
+ * changement pour (1) transférer la couronne 👑 en temps réel chez tous et
+ * (2) donner au joueur promu l'affichage + le contrôle du bouton « Skip ». Le Host
+ * diffuse en continu un snapshot d'état à l'héritier (ciblé, jamais affiché), ce
+ * qui permet la reprise autoritaire sans exposer les cumuls.
  *
- * Règles :
- *  - 10 catégories tirées au sort (fixes pour toute la partie).
- *  - 10 manches ; à chaque manche : 3-2-1 → lettre → 3 min 30 de saisie.
- *  - Fin de manche : minuteur à 0:00 OU « STOP » (actif si les 10 champs remplis).
- *  - Notation : le Host attribue 0 à 9 points par réponse ; scores cumulés.
- *  - Classement final avec gestion des égalités (rang partagé, ex æquo).
+ * Contrat : export default { mount(container, context), unmount() }.
+ * PetitBacEngine et PetitBacUI sont exportés pour les tests.
  */
 
 /* ====================================================================== */
@@ -81,12 +77,15 @@ export const CATEGORIES = Object.freeze([
   'Mot de 4 lettres pile', 'Quelque chose de gratuit', 'Mot se terminant par la lettre', 'Verbe', 'Adjectif',
 ]);
 
-const ALPHABET = 'ABCDEFGHIJLMNOPRSTUV'.split(''); // K,Q,W,X,Y,Z exclus (trop difficiles)
-export const TOTAL_ROUNDS = 10;
+const ALPHABET = 'ABCDEFGHIJLMNOPRSTUV'.split(''); // K,Q,W,X,Y,Z exclus
+export const TOTAL_ROUNDS = 5;
 export const NB_CATS = 10;
 export const PLAY_MS = 210000;       // 3 min 30
 const COUNTDOWN_MS = 4200;           // 3-2-1 + révélation lettre
-const GRACE_MS = 700;                // délai de collecte des dernières réponses
+const GRACE_MS = 700;                // collecte des dernières réponses
+const ROUND_GAP_MS = 1400;           // pause après le dernier vote d'une manche
+const HOST_WATCH_MS = 400;           // fréquence de détection d'un changement de Host
+const VOTE_VALUES = Object.freeze({ 0: '❌', 1: '➖', 2: '✅' });
 
 /* ====================================================================== */
 /* Moteur de règles (pur : aucune dépendance DOM/réseau)                  */
@@ -101,17 +100,54 @@ export class PetitBacEngine {
     this.players = players.map((p) => ({ id: p.id, pseudo: p.pseudo }));
     this.rng = rng;
     this.categories = shuffle(CATEGORIES, rng).slice(0, NB_CATS);
-    const bag = shuffle(ALPHABET, rng);
-    this.letterBag = bag.slice(0, TOTAL_ROUNDS);
+    this.letterBag = shuffle(ALPHABET, rng).slice(0, TOTAL_ROUNDS);
     this.round = 0;
+    this.catIndex = 0;
     this.rounds = [];
     this.letter = '';
     this.playEndsAt = 0;
     this.phase = 'lobby';
     this.chat = [];
     // Jokers : un usage de chaque par joueur pour toute la partie.
-    this.bonuses = Object.fromEntries(players.map((p) => [p.id, { double: true, gel: true, sablier: true }]));
+    this.bonuses = Object.fromEntries(this.players.map((p) => [p.id, { double: true, gel: true, sablier: true }]));
     this.frozenUntil = {}; // pid -> timestamp de fin de gel
+  }
+
+  /** Reconstruit un moteur depuis un snapshot (reprise Host). */
+  static fromSnapshot(s) {
+    const e = Object.create(PetitBacEngine.prototype);
+    e.rng = Math.random;
+    e.players = s.players;
+    e.categories = s.categories;
+    e.letterBag = s.letterBag;
+    e.round = s.round;
+    e.catIndex = s.catIndex;
+    e.rounds = s.rounds;
+    e.letter = s.letter;
+    e.playEndsAt = s.playEndsAt;
+    e.phase = s.phase;
+    e.chat = s.chat || [];
+    e.bonuses = s.bonuses || Object.fromEntries(e.players.map((p) => [p.id, { double: true, gel: true, sablier: true }]));
+    e.frozenUntil = s.frozenUntil || {};
+    return e;
+  }
+
+  /** Copie profonde et sérialisable de l'état autoritaire complet. */
+  snapshot() {
+    return JSON.parse(JSON.stringify({
+      players: this.players,
+      categories: this.categories,
+      letterBag: this.letterBag,
+      round: this.round,
+      catIndex: this.catIndex,
+      rounds: this.rounds,
+      letter: this.letter,
+      playEndsAt: this.playEndsAt,
+      phase: this.phase,
+      chat: this.chat,
+      bonuses: this.bonuses,
+      frozenUntil: this.frozenUntil,
+    }));
   }
 
   pseudoOf(id) { return (this.players.find((p) => p.id === id) || {}).pseudo || '???'; }
@@ -119,6 +155,7 @@ export class PetitBacEngine {
   startRound() {
     if (this.round >= TOTAL_ROUNDS) return { ok: false, error: 'Partie terminée.' };
     this.round += 1;
+    this.catIndex = 0;
     this.letter = this.letterBag[(this.round - 1) % this.letterBag.length]
       || ALPHABET[Math.floor(this.rng() * ALPHABET.length)];
     this.rounds.push({ letter: this.letter, answers: {}, scores: {}, doubles: [] });
@@ -188,8 +225,7 @@ export class PetitBacEngine {
     return out;
   }
 
-  /** Fige les réponses, initialise la grille de notation, passe en révélation. */
-  toReveal() {
+  toVote() {
     const r = this.rounds[this.round - 1];
     if (!r) return;
     for (const p of this.players) {
@@ -197,18 +233,51 @@ export class PetitBacEngine {
       r.scores[p.id] = r.scores[p.id] || {};
       for (const c of this.categories) {
         if (r.answers[p.id][c] == null) r.answers[p.id][c] = '';
-        if (r.scores[p.id][c] == null) r.scores[p.id][c] = 0;
       }
     }
-    this.phase = 'reveal';
+    this.catIndex = 0;
+    this.phase = 'vote';
   }
 
-  setScore(pid, cat, val) {
+  hasVoted(pid, cat) {
     const r = this.rounds[this.round - 1];
-    if (!r || this.phase !== 'reveal') return;
+    return !!(r && r.scores[pid] && r.scores[pid][cat] !== undefined);
+  }
+
+  allVotedFor(catIndex) {
+    const cat = this.categories[catIndex];
+    return this.players.every((p) => this.hasVoted(p.id, cat));
+  }
+
+  _advanceAfterCategory() {
+    if (this.catIndex < NB_CATS - 1) { this.catIndex += 1; return { ok: true, advanced: true }; }
+    return { ok: true, roundComplete: true };
+  }
+
+  /** Un joueur note SON propre mot (0/1/2). Verrouillé après le 1er vote. */
+  castVote(pid, catIndex, value) {
+    if (this.phase !== 'vote') return { ok: false };
+    if (catIndex !== this.catIndex) return { ok: false };
+    if (![0, 1, 2].includes(value)) return { ok: false };
+    const r = this.rounds[this.round - 1];
+    const cat = this.categories[catIndex];
     r.scores[pid] = r.scores[pid] || {};
-    const n = Number.isFinite(val) ? Math.trunc(val) : 0;
-    r.scores[pid][cat] = Math.max(0, Math.min(9, n));
+    if (r.scores[pid][cat] !== undefined) return { ok: true };
+    r.scores[pid][cat] = value;
+    if (this.allVotedFor(this.catIndex)) return this._advanceAfterCategory();
+    return { ok: true };
+  }
+
+  /** Secours Host : 0 pt aux joueurs n'ayant pas voté, puis passage forcé. */
+  skipCategory() {
+    if (this.phase !== 'vote') return { ok: false };
+    const r = this.rounds[this.round - 1];
+    const cat = this.categories[this.catIndex];
+    for (const p of this.players) {
+      r.scores[p.id] = r.scores[p.id] || {};
+      if (r.scores[p.id][cat] === undefined) r.scores[p.id][cat] = 0;
+    }
+    return this._advanceAfterCategory();
   }
 
   addChat(from, text) {
@@ -232,7 +301,6 @@ export class PetitBacEngine {
     return t;
   }
 
-  /** Classement avec gestion des égalités (rang de compétition : 1,2,2,4). */
   ranking() {
     const t = this.totals();
     const arr = this.players
@@ -265,6 +333,7 @@ export class PetitBacEngine {
       round: this.round,
       totalRounds: TOTAL_ROUNDS,
       categories: this.categories,
+      nbCats: NB_CATS,
       letter: this.letter,
       playEndsAt: this.playEndsAt,
       players: this.players,
@@ -276,13 +345,22 @@ export class PetitBacEngine {
     if (this.phase === 'playing') v.filled = this.filledCounts();
     const cur = this.rounds[this.round - 1];
     v.doubles = (cur && cur.doubles) || [];
-    if (this.phase === 'reveal' || this.phase === 'leaderboard') {
+    if (this.phase === 'vote') {
       const r = this.rounds[this.round - 1] || { answers: {}, scores: {} };
-      v.answers = r.answers;
-      v.scores = r.scores;
+      const activeCategory = this.categories[this.catIndex];
+      v.catIndex = this.catIndex;
+      v.activeCategory = activeCategory;
+      v.wordsActive = Object.fromEntries(
+        this.players.map((p) => [p.id, (r.answers[p.id] || {})[activeCategory] || '']),
+      );
+      v.votesActive = Object.fromEntries(
+        this.players.map((p) => [p.id, (r.scores[p.id] || {})[activeCategory]]),
+      );
+    }
+    if (this.phase === 'leaderboard') {
+      v.ranking = this.ranking();
       v.totals = this.totals();
     }
-    if (this.phase === 'leaderboard') v.ranking = this.ranking();
     return v;
   }
 }
@@ -292,23 +370,23 @@ export class PetitBacEngine {
 /* ====================================================================== */
 
 const CSS = `
-.pb{--pb-accent:var(--accent,#6c5ce7);--pb-surface:var(--surface,#171a24);--pb-border:var(--border,#2a2f3d);--pb-ink:var(--text,#e8eaf0);--pb-deep:#0e1017;display:flex;gap:12px;height:600px;max-height:100%;font-family:inherit;color:var(--pb-ink)}
+.pb{--pb-accent:var(--accent,#6c5ce7);--pb-green:#00ff88;--pb-surface:var(--surface,#171a24);--pb-border:var(--border,#2a2f3d);--pb-ink:var(--text,#e8eaf0);--pb-deep:#0e1017;display:flex;gap:12px;height:600px;max-height:100%;font-family:inherit;color:var(--pb-ink)}
 .pb *{box-sizing:border-box}
 .pb__main{flex:1;position:relative;display:flex;flex-direction:column;background:var(--pb-surface);border:1px solid var(--pb-border);border-radius:14px;overflow:hidden;min-width:0}
 .pb__side{width:250px;flex:none;display:flex;flex-direction:column;background:var(--pb-surface);border:1px solid var(--pb-border);border-radius:14px;overflow:hidden}
 .pb__head{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--pb-border);gap:10px;flex:none}
 .pb__round{font-weight:700;letter-spacing:.4px;opacity:.85;font-size:14px}
-.pb__badge{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:10px;font-size:21px;font-weight:800;background:var(--pb-accent);color:#fff;box-shadow:0 4px 14px rgba(108,92,231,.4)}
+.pb__badge{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:10px;font-size:21px;font-weight:800;background:var(--pb-green);color:#07130c;box-shadow:0 4px 16px rgba(0,255,136,.45)}
 .pb__timer{font-variant-numeric:tabular-nums;font-weight:800;font-size:19px;padding:4px 10px;border-radius:8px;background:var(--pb-deep);border:1px solid var(--pb-border)}
 .pb__timer.pb--low{color:#ff6b6b;border-color:#ff6b6b;animation:pbpulse 1s infinite}
 @keyframes pbpulse{50%{opacity:.45}}
 .pb__stage{flex:1;overflow:auto;padding:14px}
 .pb__status{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);background:var(--pb-deep);border:1px solid var(--pb-border);padding:6px 14px;border-radius:20px;font-size:13px;pointer-events:none;opacity:0;transition:opacity .2s;max-width:90%}
 .pb__status.pb--on{opacity:1}
-.pb-cd{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 40%,#232842,#12141d)}
+.pb-cd{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 40%,#1b2a20,#0d130f)}
 .pb-cd__n{font-weight:900;line-height:1;text-align:center}
 .pb-cd__n--num{font-size:140px;color:#fff;animation:pbpop .8s ease}
-.pb-cd__n--letter{font-size:170px;color:var(--pb-accent);text-shadow:0 0 40px rgba(108,92,231,.7);animation:pbreveal .9s cubic-bezier(.2,1.4,.4,1)}
+.pb-cd__n--letter{font-size:170px;color:var(--pb-green);text-shadow:0 0 44px rgba(0,255,136,.7);animation:pbreveal .9s cubic-bezier(.2,1.4,.4,1)}
 @keyframes pbpop{0%{transform:scale(2);opacity:0}40%{opacity:1}100%{transform:scale(1)}}
 @keyframes pbreveal{0%{transform:scale(.2) rotate(-25deg);opacity:0}60%{transform:scale(1.25)}100%{transform:scale(1) rotate(0)}}
 @media(prefers-reduced-motion:reduce){.pb-cd__n--num,.pb-cd__n--letter{animation:none}.pb__timer.pb--low{animation:none}}
@@ -317,25 +395,38 @@ const CSS = `
 .pb-field{display:flex;flex-direction:column;gap:4px;min-width:0}
 .pb-field label{font-size:12px;opacity:.7;font-weight:600}
 .pb-field input{padding:9px 12px;border-radius:9px;border:1px solid var(--pb-border);background:var(--pb-deep);color:inherit;font-size:15px;width:100%}
-.pb-field input:focus{outline:none;border-color:var(--pb-accent);box-shadow:0 0 0 3px rgba(108,92,231,.25)}
+.pb-field input:focus{outline:none;border-color:var(--pb-green);box-shadow:0 0 0 3px rgba(0,255,136,.2)}
 .pb-field input.pb--ok{border-color:#33c26b}
 .pb-field input:disabled{opacity:.6}
 .pb-actions{max-width:660px;margin:16px auto 0;display:flex;justify-content:center}
 .pb-stop{padding:14px 46px;font-size:18px;font-weight:800;letter-spacing:1px;border:none;border-radius:12px;background:#ff5252;color:#fff;cursor:pointer;box-shadow:0 6px 20px rgba(255,82,82,.4)}
 .pb-stop:disabled{background:#3a3f4d;color:#8a8f9c;cursor:not-allowed;box-shadow:none}
-.pb-tblwrap{overflow:auto}
-.pb-tbl{border-collapse:collapse;min-width:100%;font-size:13px}
-.pb-tbl th,.pb-tbl td{border:1px solid var(--pb-border);padding:5px 8px;text-align:left;vertical-align:middle;white-space:nowrap}
-.pb-tbl thead th{position:sticky;top:0;background:#1d2130;font-weight:700;z-index:1}
-.pb-tbl th.pb-cat{position:sticky;left:0;background:#1d2130;z-index:2;max-width:170px;white-space:normal}
-.pb-cell{display:flex;align-items:center;gap:6px}
-.pb-cell .ans{flex:1;min-width:60px}
-.pb-cell .ans.pb--empty{opacity:.4;font-style:italic}
-.pb-cell input.pb-sc{width:42px;padding:3px 4px;text-align:center;border-radius:6px;border:1px solid var(--pb-border);background:var(--pb-deep);color:inherit;font-weight:700}
-.pb-cell input.pb-sc:focus{outline:none;border-color:var(--pb-accent)}
-.pb-cell .pb-mini{width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;background:var(--pb-deep);border:1px solid var(--pb-border);font-weight:700}
-.pb-tot td{background:#1a1e2b;font-weight:800}
-.pb-next{margin:14px auto 0;display:block;padding:12px 34px;font-size:16px;font-weight:800;border:none;border-radius:11px;background:var(--pb-accent);color:#fff;cursor:pointer}
+.pb-vote{max-width:560px;margin:0 auto}
+.pb-vote__cat{text-align:center;margin:2px 0 16px}
+.pb-vote__idx{font-size:12px;opacity:.6;font-weight:700;letter-spacing:1.5px}
+.pb-vote__name{font-size:26px;font-weight:800;margin-top:3px}
+.pb-vrow{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:11px;margin-bottom:8px;background:var(--pb-deep);border:1px solid var(--pb-border)}
+.pb-vrow--me{border-color:var(--pb-green);box-shadow:0 0 0 1px var(--pb-green) inset}
+.pb-vrow__who{width:140px;flex:none;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pb-crown{margin-left:2px}
+.pb-vrow__word{flex:1;font-size:16px;word-break:break-word}
+.pb-vrow__word.pb--empty{opacity:.4;font-style:italic}
+.pb-vrow__slot{flex:none;display:flex;gap:6px;align-items:center;min-height:36px;justify-content:flex-end}
+.pb-vbtn{width:36px;height:36px;border-radius:9px;border:1px solid var(--pb-border);background:#151a26;font-size:17px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;line-height:1;transition:transform .08s,border-color .12s}
+.pb-vbtn:hover{transform:translateY(-1px)}
+.pb-vbtn--no:hover{border-color:#ff5252}
+.pb-vbtn--dup:hover{border-color:#9aa0ad}
+.pb-vbtn--ok:hover{border-color:var(--pb-green)}
+.pb-sym{width:36px;height:36px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;font-size:19px;font-weight:800;border:1px solid var(--pb-border);animation:pbpop2 .25s ease}
+@keyframes pbpop2{0%{transform:scale(.5);opacity:0}100%{transform:scale(1);opacity:1}}
+.pb-sym--no{color:#ff5252;border-color:#ff5252}
+.pb-sym--dup{color:#c8cdd8}
+.pb-sym--ok{color:var(--pb-green);border-color:var(--pb-green)}
+.pb-sym--wait{opacity:.3;font-size:12px;font-weight:600;border-style:dashed}
+.pb-vote__prog{text-align:center;margin-top:14px;font-size:13px;opacity:.7}
+.pb-skipwrap{display:flex;justify-content:center;margin-top:12px;min-height:38px}
+.pb-skip{padding:9px 22px;font-size:14px;font-weight:700;border:1px solid #ffb454;color:#ffb454;background:rgba(255,180,84,.08);border-radius:10px;cursor:pointer}
+.pb-skip:hover{background:rgba(255,180,84,.18)}
 .pb-wait{text-align:center;opacity:.7;margin-top:16px}
 .pb-lead{max-width:520px;margin:0 auto}
 .pb-lead h2{text-align:center;font-size:24px;margin:6px 0 18px}
@@ -354,9 +445,9 @@ const CSS = `
 .pb-chat__form input{flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid var(--pb-border);background:var(--pb-deep);color:inherit}
 .pb-chat__form button{padding:8px 12px;border:none;border-radius:8px;background:var(--pb-accent);color:#fff;font-weight:700;cursor:pointer}
 @media(max-width:720px){.pb{flex-direction:column;height:auto}.pb__main{min-height:420px}.pb__side{width:auto;height:260px}}
-.pb--t-ocean{--pb-accent:#00b4d8}.pb--t-ocean .pb__badge{box-shadow:0 4px 14px rgba(0,180,216,.4)}.pb--t-ocean .pb-cd{background:radial-gradient(circle at 50% 40%,#0e3a52,#081521)}
-.pb--t-sunset{--pb-accent:#ff7849}.pb--t-sunset .pb__badge{box-shadow:0 4px 14px rgba(255,120,73,.4)}.pb--t-sunset .pb-cd{background:radial-gradient(circle at 50% 40%,#4a2030,#160a12)}
-.pb--t-foret{--pb-accent:#2fbf71}.pb--t-foret .pb__badge{box-shadow:0 4px 14px rgba(47,191,113,.4)}.pb--t-foret .pb-cd{background:radial-gradient(circle at 50% 40%,#14402a,#081410)}
+.pb--t-ocean{--pb-accent:#00b4d8}.pb--t-ocean .pb-cd{background:radial-gradient(circle at 50% 40%,#0e3a52,#081521)}
+.pb--t-sunset{--pb-accent:#ff7849}.pb--t-sunset .pb-cd{background:radial-gradient(circle at 50% 40%,#4a2030,#160a12)}
+.pb--t-foret{--pb-accent:#2fbf71}.pb--t-foret .pb-cd{background:radial-gradient(circle at 50% 40%,#14402a,#081410)}
 .pb--t-retro{--pb-accent:#33ff66;--pb-ink:#c8ffd4;--pb-deep:#020a04}.pb--t-retro .pb__main,.pb--t-retro .pb__side{background:#03140a;border-color:#1d5c33}.pb--t-retro .pb-cd{background:radial-gradient(circle at 50% 40%,#06280f,#010703)}
 .pb__themes{display:flex;gap:6px;align-items:center}
 .pb__dot{width:16px;height:16px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0}
@@ -394,8 +485,6 @@ export class PetitBacUI {
     this.container = container;
     this.ctx = context;
     this.me = context.me;
-    this.hostId = context.hostId;
-    this.isHost = context.me.id === context.hostId;
     this.players = context.players;
     this.engine = null;
     this.view = null;
@@ -403,17 +492,27 @@ export class PetitBacUI {
     this.stageKey = '';
     this.localAnswers = [];
     this.inputEls = [];
-    this.miniScoreEls = {};
-    this.totalEls = {};
+    this.myPending = undefined;
     this.collecting = false;
-    this.timers = { cd: [], tick: null, play: null, collect: null, status: null };
+    this._snap = null;        // dernier snapshot reçu (héritier) pour reprise Host
+    this._lastHostId = null;
+    this.timers = { cd: [], tick: null, play: null, collect: null, round: null, status: null, hostWatch: null, progress: null, confetti: null };
     this.pushAnswers = debounce(() => this._pushAnswers(), 400);
-    this.broadcastScores = debounce(() => this.broadcast(), 250);
     // Boosts : thème et son persistés localement (préférence personnelle).
     this.theme = (typeof localStorage !== 'undefined' && localStorage.getItem('arcade-pb-theme')) || 'neon';
     this.sound = typeof localStorage === 'undefined' ? true : localStorage.getItem('arcade-pb-sound') !== 'off';
     this.audioCtx = null;
     this.gelPicking = false;
+  }
+
+  // hostId / isHost relus EN DIRECT : suivent context.hostId même s'il change.
+  get hostId() { return this.ctx.hostId; }
+  get isHost() { return this.ctx.me.id === this.ctx.hostId; }
+
+  /** Héritier = premier joueur qui n'est pas le Host courant (relais d'état). */
+  heirId() {
+    const p = this.players.find((x) => x.id !== this.hostId);
+    return p ? p.id : null;
   }
 
   /* ---------- montage ---------- */
@@ -424,6 +523,9 @@ export class PetitBacUI {
     this.buildShell();
     this.container.append(this.styleEl, this.root);
 
+    this._lastHostId = this.hostId;
+    this.unsub = this.ctx.onMessage((m) => this.onMsg(m.from, m.data));
+
     if (this.isHost) {
       try {
         this.engine = new PetitBacEngine(this.players);
@@ -431,18 +533,19 @@ export class PetitBacUI {
         this.stage.replaceChildren(h('div', { className: 'pb-wait' }, `⚠️ ${e.message}`));
         return;
       }
-      this.unsub = this.ctx.onMessage((m) => this.onHostMsg(m.from, m.data));
       this.startRoundHost();
     } else {
-      this.unsub = this.ctx.onMessage((m) => this.onGuestMsg(m.from, m.data));
       this.stage.replaceChildren(h('div', { className: 'pb-wait' }, '⏳ Connexion à la table du Host…'));
       this.ctx.sendMessage({ t: 'action', a: 'hello' }, this.hostId);
     }
+
+    // Watchdog : réagit en temps réel à un changement de context.hostId.
+    this.timers.hostWatch = setInterval(() => this.checkHostChange(), HOST_WATCH_MS);
   }
 
   buildShell() {
     this.timerEl = h('span', { className: 'pb__timer' }, '3:30');
-    this.roundEl = h('span', { className: 'pb__round' }, 'Manche —/10');
+    this.roundEl = h('span', { className: 'pb__round' }, 'Manche —/5');
     this.cornerEl = h('span', { className: 'pb__badge', style: 'display:none' }, '');
     this.sndBtn = h('button', {
       className: 'pb__snd', title: 'Sons',
@@ -451,10 +554,7 @@ export class PetitBacUI {
     const THEME_COLORS = { neon: '#6c5ce7', ocean: '#00b4d8', sunset: '#ff7849', foret: '#2fbf71', retro: '#33ff66' };
     this.themeDots = {};
     const themes = h('div', { className: 'pb__themes', title: 'Thème' }, Object.entries(THEME_COLORS).map(([id, color]) => {
-      const dot = h('button', {
-        className: 'pb__dot', style: `background:${color}`,
-        onClick: () => this.setTheme(id),
-      });
+      const dot = h('button', { className: 'pb__dot', style: `background:${color}`, onClick: () => this.setTheme(id) });
       this.themeDots[id] = dot;
       return dot;
     }));
@@ -493,7 +593,7 @@ export class PetitBacUI {
     this.theme = id;
     this.root.className = `pb${id === 'neon' ? '' : ` pb--t-${id}`}`;
     Object.entries(this.themeDots).forEach(([k, dot]) => dot.classList.toggle('pb__dot--on', k === id));
-    try { localStorage.setItem('arcade-pb-theme', id); } catch { /* stockage indisponible : thème non persisté */ }
+    try { localStorage.setItem('arcade-pb-theme', id); } catch { /* stockage indisponible */ }
     if (!silent) this.beep(660, 0.05);
   }
 
@@ -504,7 +604,7 @@ export class PetitBacUI {
     if (this.sound) this.beep(880, 0.06);
   }
 
-  /** Petits sons WebAudio (aucun fichier) : décompte, lettre, stop, victoire. */
+  /** Petits sons WebAudio (aucun fichier) : décompte, lettre, alertes, victoire. */
   beep(freq, dur = 0.08, type = 'sine', gain = 0.04) {
     if (!this.sound) return;
     try {
@@ -521,7 +621,12 @@ export class PetitBacUI {
     } catch { /* audio indisponible : silencieux */ }
   }
 
-  /* ---------- transport ---------- */
+  /* ---------- transport (un seul point d'entrée, dispatch selon le rôle courant) ---------- */
+
+  onMsg(from, data) {
+    if (this.isHost) this.onHostMsg(from, data);
+    else this.onGuestMsg(from, data);
+  }
 
   onHostMsg(from, data) {
     if (!data) return;
@@ -530,7 +635,13 @@ export class PetitBacUI {
       return;
     }
     if (data.a === 'update') { this.engine.setAnswers(from, data.answers || {}); return; }
-    if (data.a === 'chat') { this.engine.addChat(from, data.text); this.broadcast(); return; }
+    if (data.a === 'stop') {
+      if (this.engine.phase === 'playing') {
+        this.engine.addSys(`🛑 ${this.engine.pseudoOf(from)} a crié STOP !`);
+        this.beginVote();
+      }
+      return;
+    }
     if (data.a === 'bonus') {
       const res = this.engine.useBonus(from, data.kind, data.target);
       if (!res.ok) { this.ctx.sendMessage({ t: 'error', message: res.error }, from); return; }
@@ -538,16 +649,14 @@ export class PetitBacUI {
       this.broadcast();
       return;
     }
-    if (data.a === 'stop') {
-      if (this.engine.phase === 'playing') {
-        this.engine.addSys(`🛑 ${this.engine.pseudoOf(from)} a crié STOP !`);
-        this.beginReveal();
-      }
-    }
+    if (data.a === 'vote') { this.hostHandleVote(from, data.catIndex, data.value); return; }
+    if (data.a === 'chat') { this.engine.addChat(from, data.text); this.broadcast(); }
   }
 
   onGuestMsg(from, data) {
-    if (from !== this.hostId || !data) return;
+    if (!data) return;
+    if (data.t === 'state') { this._snap = data.snap; return; } // relais d'état (héritier)
+    if (from !== this.hostId) return;
     if (data.t === 'view') this.applyView(data.view);
     else if (data.t === 'collect') this._pushAnswers();
     else if (data.t === 'error') this.status(data.message);
@@ -557,6 +666,11 @@ export class PetitBacUI {
     for (const p of this.players) {
       if (p.id === this.me.id) continue;
       this.ctx.sendMessage({ t: 'view', view: this.engine.getViewFor(p.id) }, p.id);
+    }
+    // Relais d'état vers l'héritier (ciblé, jamais affiché → cumuls non exposés).
+    const heir = this.heirId();
+    if (heir && heir !== this.me.id) {
+      this.ctx.sendMessage({ t: 'state', snap: this.engine.snapshot() }, heir);
     }
     this.applyView(this.engine.getViewFor(this.me.id));
   }
@@ -575,7 +689,7 @@ export class PetitBacUI {
       // Diffusion périodique pendant la saisie : progression, gels, jokers.
       clearInterval(this.timers.progress);
       this.timers.progress = setInterval(() => {
-        if (this.engine.phase === 'playing') this.broadcast();
+        if (this.engine && this.engine.phase === 'playing') this.broadcast();
       }, 2000);
     }, COUNTDOWN_MS));
   }
@@ -583,36 +697,87 @@ export class PetitBacUI {
   rescheduleEnd() {
     clearTimeout(this.timers.play);
     const rem = Math.max(0, this.engine.playEndsAt - Date.now());
-    this.timers.play = setTimeout(() => this.beginReveal(), rem + 300);
+    this.timers.play = setTimeout(() => this.beginVote(), rem + 300);
   }
 
-  beginReveal() {
+  beginVote() {
     if (this.collecting || !this.engine || this.engine.phase !== 'playing') return;
     this.collecting = true;
     clearTimeout(this.timers.play);
     clearInterval(this.timers.tick);
     clearInterval(this.timers.progress);
-    // On demande à tous les clients leurs dernières réponses, avec un court délai
-    // de grâce pour laisser transiter les messages, puis on fige la manche.
     this.engine.setAnswers(this.me.id, this.collectLocal());
     for (const p of this.players) {
       if (p.id !== this.me.id) this.ctx.sendMessage({ t: 'collect' }, p.id);
     }
     this.timers.collect = setTimeout(() => {
-      this.engine.toReveal();
+      this.engine.toVote();
       this.collecting = false;
       this.broadcast();
     }, GRACE_MS);
   }
 
-  nextHost() {
-    if (this.engine.round < TOTAL_ROUNDS) this.startRoundHost();
-    else { this.engine.endMatch(); this.broadcast(); }
+  afterVoteResolve(res) {
+    if (res && res.roundComplete) {
+      this.timers.round = setTimeout(() => {
+        if (this.engine.round < TOTAL_ROUNDS) this.startRoundHost();
+        else { this.engine.endMatch(); this.broadcast(); }
+      }, ROUND_GAP_MS);
+    }
+  }
+
+  hostHandleVote(pid, catIndex, value) {
+    const res = this.engine.castVote(pid, catIndex, value);
+    if (!res.ok) return;
+    this.broadcast();
+    this.afterVoteResolve(res);
+  }
+
+  hostSkip() {
+    if (!this.engine || this.engine.phase !== 'vote') return;
+    const res = this.engine.skipCategory();
+    this.broadcast();
+    this.afterVoteResolve(res);
   }
 
   finish() {
     const result = this.engine.endMatch();
     this.ctx.onEnd(result);
+  }
+
+  /* ---------- reprise Host (promotion en temps réel) ---------- */
+
+  checkHostChange() {
+    const cur = this.hostId;
+    if (cur === this._lastHostId) return;
+    this._lastHostId = cur;
+    if (this.isHost && !this.engine) this.becomeHost();
+    else this.refreshHostVisuals();
+  }
+
+  becomeHost() {
+    if (this.engine) { this.refreshHostVisuals(); return; }
+    if (!this._snap) { this.status('⚠️ Reprise Host impossible : état non reçu.'); return; }
+    this.engine = PetitBacEngine.fromSnapshot(this._snap);
+    const ph = this.engine.phase;
+    if (ph === 'playing') {
+      this.rescheduleEnd();
+      clearInterval(this.timers.progress);
+      this.timers.progress = setInterval(() => {
+        if (this.engine && this.engine.phase === 'playing') this.broadcast();
+      }, 2000);
+    } else if (ph === 'countdown') {
+      this.engine.beginPlaying();
+      this.rescheduleEnd();
+    }
+    this.status('👑 Vous êtes le nouveau Host.');
+    this.broadcast();
+  }
+
+  refreshHostVisuals() {
+    if (!this.view) return;
+    if (this.view.phase === 'vote') this.buildVoteRows(this.view);
+    else if (this.view.phase === 'leaderboard') { this.stageKey = ''; this.applyView(this.view); }
   }
 
   /* ---------- flux joueur ---------- */
@@ -633,8 +798,16 @@ export class PetitBacUI {
 
   triggerStop() {
     this._pushAnswers();
-    if (this.isHost) this.beginReveal();
+    if (this.isHost) this.beginVote();
     else this.ctx.sendMessage({ t: 'action', a: 'stop' }, this.hostId);
+  }
+
+  castMyVote(catIndex, value) {
+    if (this.myPending !== undefined) return;
+    this.myPending = value;
+    this.buildVoteRows(this.view);
+    if (this.isHost) this.hostHandleVote(this.me.id, catIndex, value);
+    else this.ctx.sendMessage({ t: 'action', a: 'vote', catIndex, value }, this.hostId);
   }
 
   sendChat() {
@@ -663,12 +836,17 @@ export class PetitBacUI {
 
   /* ---------- rendu ---------- */
 
+  crownFor(id) { return id === this.hostId ? ' 👑' : ''; }
+
   applyView(view) {
     if (!view) return;
     this.view = view;
     this.renderChat();
+    this.progressEl.classList.toggle('pb--on', view.phase === 'playing');
+    if (view.phase === 'playing') this.renderProgress();
+    if (view.phase !== 'playing' && this.frozenOv) { this.frozenOv.remove(); this.frozenOv = null; }
     this.roundEl.textContent = `Manche ${view.round || '—'}/${view.totalRounds || TOTAL_ROUNDS}`;
-    const showCorner = view.phase === 'playing' || view.phase === 'reveal';
+    const showCorner = view.phase === 'playing' || view.phase === 'vote';
     this.cornerEl.style.display = showCorner ? '' : 'none';
     this.cornerEl.textContent = view.letter || '';
     if (view.phase !== 'playing') {
@@ -677,14 +855,10 @@ export class PetitBacUI {
       this.timerEl.classList.remove('pb--low');
     }
 
-    this.progressEl.classList.toggle('pb--on', view.phase === 'playing');
-    if (view.phase === 'playing') this.renderProgress();
-    if (view.phase !== 'playing' && this.frozenOv) { this.frozenOv.remove(); this.frozenOv = null; }
-
-    if (view.phase === 'reveal') {
-      const k = `reveal:${view.round}`;
-      if (k !== this.stageKey) { this.stageKey = k; this.renderReveal(); }
-      else this.patchReveal();
+    if (view.phase === 'vote') {
+      const k = `vote:${view.round}:${view.catIndex}`;
+      if (k !== this.stageKey) { this.stageKey = k; this.myPending = undefined; this.renderVote(view); }
+      else this.buildVoteRows(view);
       return;
     }
     const k = `${view.phase}:${view.round}`;
@@ -776,6 +950,7 @@ export class PetitBacUI {
   /** Panneau de progression (au-dessus du chat) : champs remplis, gels, doubles. */
   renderProgress() {
     const v = this.view;
+    if (!v.filled) { this.progressEl.replaceChildren(); return; }
     const total = v.categories.length;
     const now = Date.now();
     this.progressEl.replaceChildren(...v.players.map((p) => {
@@ -784,7 +959,7 @@ export class PetitBacUI {
       const doubled = (v.doubles || []).includes(p.id);
       const bar = h('span', { className: 'bar' }, h('i', { style: `width:${Math.round((n / total) * 100)}%` }));
       return h('div', { className: 'pb-prow' }, [
-        h('span', { className: 'nm' }, `${p.pseudo}${doubled ? ' ✨' : ''}${frozen ? ' ❄️' : ''}`),
+        h('span', { className: 'nm' }, `${p.pseudo}${p.id === this.hostId ? ' 👑' : ''}${doubled ? ' ✨' : ''}${frozen ? ' ❄️' : ''}`),
         bar,
         h('span', { className: 'ct' }, `${n}/${total}`),
       ]);
@@ -814,10 +989,7 @@ export class PetitBacUI {
       if (this.frozenOv) {
         this.frozenOv.style.display = frozen ? '' : 'none';
         if (frozen) {
-          this.frozenOv.replaceChildren(
-            h('span', {}, '❄️'),
-            `Gelé·e ! Encore ${Math.ceil(frozenRem / 1000)} s…`,
-          );
+          this.frozenOv.replaceChildren(h('span', {}, '❄️'), `Gelé·e ! Encore ${Math.ceil(frozenRem / 1000)} s…`);
         }
       }
       const over = rem <= 0;
@@ -832,79 +1004,73 @@ export class PetitBacUI {
     this.timers.tick = setInterval(render, 250);
   }
 
-  renderReveal() {
-    const v = this.view;
-    this.miniScoreEls = {};
-    this.totalEls = {};
-    const head = h('tr', {}, [
-      h('th', { className: 'pb-cat' }, `Lettre ${v.letter}`),
-      ...v.players.map((p) => h('th', {}, `${p.pseudo}${(v.doubles || []).includes(p.id) ? ' ✨×2' : ''}`)),
+  /* ---------- phase de vote (auto-gérée, une catégorie à la fois) ---------- */
+
+  renderVote(view) {
+    this.voteRowsEl = h('div', {});
+    this.voteProgEl = h('div', { className: 'pb-vote__prog' }, '');
+    this.skipWrap = h('div', { className: 'pb-skipwrap' });
+    const wrap = h('div', { className: 'pb-vote' }, [
+      h('div', { className: 'pb-vote__cat' }, [
+        h('div', { className: 'pb-vote__idx' }, `CATÉGORIE ${view.catIndex + 1} / ${view.nbCats}`),
+        h('div', { className: 'pb-vote__name' }, view.activeCategory),
+      ]),
+      this.voteRowsEl,
+      this.voteProgEl,
+      this.skipWrap,
     ]);
-    const body = v.categories.map((cat) => h('tr', {}, [
-      h('th', { className: 'pb-cat' }, cat),
-      ...v.players.map((p) => {
-        const ans = ((v.answers[p.id] || {})[cat] || '').trim();
-        const ansEl = h('span', { className: `ans${ans ? '' : ' pb--empty'}` }, ans || '∅');
-        let ctrl;
-        if (this.isHost) {
-          ctrl = h('input', {
-            className: 'pb-sc', type: 'number', min: '0', max: '9', step: '1',
-            value: String((v.scores[p.id] || {})[cat] ?? 0),
-            oninput: (e) => {
-              let n = parseInt(e.target.value, 10);
-              if (!Number.isFinite(n)) n = 0;
-              n = Math.max(0, Math.min(9, n));
-              e.target.value = String(n);
-              this.engine.setScore(p.id, cat, n);
-              this.patchTotalsFrom(this.engine.totals());
-              this.broadcastScores();
-            },
-          });
+    this.stage.replaceChildren(wrap);
+    this.buildVoteRows(view);
+  }
+
+  symEl(value) {
+    const cls = { 0: 'pb-sym--no', 1: 'pb-sym--dup', 2: 'pb-sym--ok' }[value];
+    return h('span', { className: `pb-sym ${cls}` }, VOTE_VALUES[value]);
+  }
+
+  buildVoteRows(view) {
+    if (!this.voteRowsEl) return;
+    const rows = view.players.map((p) => {
+      const word = (view.wordsActive[p.id] || '').trim();
+      const wordEl = h('span', { className: `pb-vrow__word${word ? '' : ' pb--empty'}` }, word || '∅');
+      let slot;
+      const serverVote = view.votesActive[p.id];
+      if (p.id === this.me.id) {
+        const myVote = serverVote !== undefined ? serverVote : this.myPending;
+        if (myVote !== undefined) {
+          slot = h('div', { className: 'pb-vrow__slot' }, this.symEl(myVote));
         } else {
-          ctrl = h('span', { className: 'pb-mini' }, String((v.scores[p.id] || {})[cat] ?? 0));
-          this.miniScoreEls[`${p.id}|${cat}`] = ctrl;
+          slot = h('div', { className: 'pb-vrow__slot' }, [
+            h('button', { className: 'pb-vbtn pb-vbtn--no', title: '0 point', onClick: () => this.castMyVote(view.catIndex, 0) }, '❌'),
+            h('button', { className: 'pb-vbtn pb-vbtn--dup', title: '1 point (doublon)', onClick: () => this.castMyVote(view.catIndex, 1) }, '➖'),
+            h('button', { className: 'pb-vbtn pb-vbtn--ok', title: '2 points (unique)', onClick: () => this.castMyVote(view.catIndex, 2) }, '✅'),
+          ]);
         }
-        return h('td', {}, h('div', { className: 'pb-cell' }, [ansEl, ctrl]));
-      }),
-    ]));
-    const totRow = h('tr', { className: 'pb-tot' }, [
-      h('td', {}, 'CUMUL'),
-      ...v.players.map((p) => {
-        const cell = h('td', {}, String(v.totals[p.id] || 0));
-        this.totalEls[p.id] = cell;
-        return cell;
-      }),
-    ]);
-    const table = h('table', { className: 'pb-tbl' }, [
-      h('thead', {}, head),
-      h('tbody', {}, [...body, totRow]),
-    ]);
-    const children = [h('div', { className: 'pb-tblwrap' }, table)];
-    if (this.isHost) {
-      children.push(h('button', {
-        className: 'pb-next', onClick: () => this.nextHost(),
-      }, v.round < v.totalRounds ? 'MANCHE SUIVANTE ▶' : 'CLASSEMENT FINAL 🏁'));
-    } else {
-      children.push(h('div', { className: 'pb-wait' }, '⏳ Le Host attribue les points…'));
-    }
-    this.stage.replaceChildren(...children);
-  }
-
-  patchReveal() {
-    const v = this.view;
-    this.patchTotalsFrom(v.totals);
-    if (this.isHost) return;
-    for (const p of v.players) {
-      for (const c of v.categories) {
-        const el = this.miniScoreEls[`${p.id}|${c}`];
-        if (el) el.textContent = String((v.scores[p.id] || {})[c] ?? 0);
+      } else if (serverVote !== undefined) {
+        slot = h('div', { className: 'pb-vrow__slot' }, this.symEl(serverVote));
+      } else {
+        slot = h('div', { className: 'pb-vrow__slot' }, h('span', { className: 'pb-sym pb-sym--wait' }, '…'));
       }
-    }
+      return h('div', { className: `pb-vrow${p.id === this.me.id ? ' pb-vrow--me' : ''}` }, [
+        h('span', { className: 'pb-vrow__who' }, [p.pseudo, h('span', { className: 'pb-crown' }, this.crownFor(p.id))]),
+        wordEl,
+        slot,
+      ]);
+    });
+    this.voteRowsEl.replaceChildren(...rows);
+    const voted = view.players.filter((p) => view.votesActive[p.id] !== undefined).length;
+    this.voteProgEl.textContent = `${voted} / ${view.players.length} ont voté`;
+    this.syncSkip();
   }
 
-  patchTotalsFrom(totals) {
-    for (const id of Object.keys(this.totalEls)) {
-      this.totalEls[id].textContent = String(totals[id] || 0);
+  syncSkip() {
+    if (!this.skipWrap) return;
+    if (this.isHost && this.view && this.view.phase === 'vote') {
+      if (!this.skipWrap.firstChild) {
+        this.skipWrap.append(h('button', { className: 'pb-skip', title: 'Forcer le passage (0 pt aux absents)', onClick: () => this.hostSkip() }, '⏭️ Skip'));
+      }
+    } else {
+      this.skipWrap.replaceChildren();
     }
   }
 
@@ -915,15 +1081,12 @@ export class PetitBacUI {
       className: `pb-lrow${r.rank <= 3 ? ` pb-lrow--${r.rank}` : ''}`,
     }, [
       h('span', { className: 'pb-rank' }, `${medal[r.rank] || r.rank}${r.tie ? ' =' : ''}`),
-      h('span', { className: 'pb-lname' }, r.pseudo),
+      h('span', { className: 'pb-lname' }, [r.pseudo, h('span', { className: 'pb-crown' }, this.crownFor(r.id))]),
       h('span', { className: 'pb-lpts' }, `${r.total} pts`),
     ]));
-    const wrap = h('div', { className: 'pb-lead' }, [
-      h('h2', {}, '🏆 Classement final'),
-      ...rows,
-    ]);
+    const wrap = h('div', { className: 'pb-lead' }, [h('h2', {}, '🏆 Classement final'), ...rows]);
     if (this.isHost) {
-      wrap.append(h('button', { className: 'pb-next', onClick: () => this.finish() }, 'Retour au salon'));
+      wrap.append(h('button', { className: 'pb-stop', style: 'margin:16px auto 0;display:block;background:var(--pb-accent);box-shadow:none;letter-spacing:0', onClick: () => this.finish() }, 'Retour au salon'));
     } else {
       wrap.append(h('div', { className: 'pb-wait' }, "Merci d'avoir joué !"));
     }
@@ -981,9 +1144,11 @@ export class PetitBacUI {
     if (this.unsub) this.unsub();
     this.clearCd();
     clearInterval(this.timers.tick);
+    clearInterval(this.timers.hostWatch);
     clearInterval(this.timers.progress);
     clearTimeout(this.timers.play);
     clearTimeout(this.timers.collect);
+    clearTimeout(this.timers.round);
     clearTimeout(this.timers.status);
     clearTimeout(this.timers.confetti);
     if (this.audioCtx) { try { this.audioCtx.close(); } catch { /* déjà fermé */ } }

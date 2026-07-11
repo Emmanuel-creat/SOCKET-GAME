@@ -20,6 +20,13 @@ export class GameView {
       if (activeGame) this.mountGame(activeGame);
       else this.unmountGame();
     });
+
+    // Promotion de Host pendant une partie : le serveur diffuse room:state avec
+    // le nouveau hostId ; on met à jour le contexte du module en direct pour que
+    // les jeux résilients (reprise Host) puissent réagir.
+    store.subscribe('room', (room) => {
+      if (this.moduleContext && room?.hostId) this.moduleContext.hostId = room.hostId;
+    });
   }
 
   async mountGame({ gameId, context }) {
@@ -28,7 +35,7 @@ export class GameView {
     replaceChildrenOf(this.container, gameContainer);
 
     try {
-      await this.loader.load(gameId, gameContainer, {
+      const moduleContext = {
         ...context,
         me,
         socket: this.socket,
@@ -37,7 +44,11 @@ export class GameView {
         onMessage: (handler) => bus.on('game:message', handler),
         // Le module signale la fin de partie : le serveur ramène tout le salon.
         onEnd: (result) => this.socket.endGame(result),
-      });
+      };
+      this.moduleContext = moduleContext;
+      const room = store.get('room');
+      if (room?.hostId) moduleContext.hostId = room.hostId;
+      await this.loader.load(gameId, gameContainer, moduleContext);
     } catch (error) {
       // Module absent ou incomplet : écran d'attente + retour possible.
       console.warn(`[arcade] Module de jeu indisponible (${gameId}) :`, error.message);
@@ -69,6 +80,7 @@ export class GameView {
   }
 
   async unmountGame() {
+    this.moduleContext = null;
     await this.loader.unload();
     this.container.replaceChildren();
   }

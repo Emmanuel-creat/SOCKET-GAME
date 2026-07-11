@@ -1,26 +1,37 @@
 {
   "id": "petit-bac",
   "nom": "Petit Bac",
-  "version": "1.1.0",
-  "joueurs": { "min": 2, "max": 16 },
-  "architecture": "host-autoritaire",
+  "version": "1.2.0",
+  "joueurs": {
+    "min": 2,
+    "max": 16
+  },
+  "architecture": "host-autoritaire avec reprise (snapshot vers l'héritier, watchdog hostId)",
   "communication": "game:message (relais générique du moteur)",
   "regles": {
     "categories": "10 tirées au sort (fixes) parmi un pool de 100",
-    "manches": "10, lettres distinctes (K, Q, W, X, Y, Z exclus)",
-    "saisie": "3 min 30, STOP actif quand les 10 champs sont remplis",
-    "notation": "manuelle par le Host, 0 à 9 par réponse, cumuls en direct",
-    "classement": "final avec gestion des égalités (rang de compétition)"
+    "manches": "5, lettres distinctes (K, Q, W, X, Y, Z exclus)",
+    "saisie": "3 min 30 (extensible au Sablier), STOP actif quand les 10 champs sont remplis",
+    "notation": "auto-gérée par vote : chacun note SON mot ❌0/➖1/✅2, une catégorie à la fois, avance quand tous ont voté",
+    "skip": "Host : 0 pt aux non-votants de la catégorie et passage forcé",
+    "confidentialite": "cumuls masqués jusqu'au classement final ; snapshot de reprise jamais affiché",
+    "couronne": "👑 sur le Host, transférée en direct à la promotion d'un nouveau Host"
   },
   "boosts": {
     "jokers": {
-      "double": "points de la manche ×2 (1 usage/partie)",
-      "gel": "gèle un adversaire 15 s (1 usage/partie)",
-      "sablier": "+25 s au chrono pour tous (1 usage/partie)"
+      "double": "points de la manche ×2",
+      "gel": "gèle un adversaire 15 s",
+      "sablier": "+25 s pour tous"
     },
-    "themes": ["neon", "ocean", "sunset", "foret", "retro"],
-    "chat": "in-game relayé par le Host + réactions emoji + événements système",
-    "progression": "compteur de champs remplis par joueur en direct",
-    "ambiance": "sons WebAudio (désactivables) et confettis au classement"
+    "themes": [
+      "neon",
+      "ocean",
+      "sunset",
+      "foret",
+      "retro"
+    ],
+    "chat": "réactions emoji + messages système",
+    "progression": "jauges de champs remplis en direct",
+    "ambiance": "sons WebAudio désactivables, confettis au classement"
   }
 }
