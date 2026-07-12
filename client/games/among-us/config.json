@@ -1,0 +1,39 @@
+{
+  "id": "among-us",
+  "nom": "Among Us",
+  "version": "1.0.0",
+  "joueurs": { "min": 4, "optimal": "8 à 10", "max": 15 },
+  "architecture": "host-autoritaire temps réel (tick 50 ms) — vues filtrées : rôles ET positions",
+  "communication": "game:message — vues personnalisées ciblées (10 Hz) + intentions ciblées vers le Host",
+  "carte": {
+    "nom": "The Skeld (adaptée)",
+    "salles": ["Cafétéria", "Armurerie", "O2", "Navigation", "Boucliers", "Communications", "Stockage", "Administration", "Électricité", "Sécurité", "Réacteur", "Moteur Sup.", "Moteur Inf.", "Infirmerie"],
+    "conduits": "12 conduits en 4 grappes reliées (graphe, pas de téléportation libre)",
+    "cameras": ["cafeteria", "medbay", "electrical", "storage"]
+  },
+  "roles": {
+    "crewmate": ["tâches", "signaler un corps", "voter", "caméras", "administration"],
+    "impostor": ["kill", "sabotage", "conduits", "fausses tâches", "vision supérieure"],
+    "fantome": "traverse les murs, termine ses tâches (elles comptent), chat séparé, ne vote pas"
+  },
+  "taches": {
+    "nombre": 16,
+    "categories": ["courtes", "longues", "communes"],
+    "minijeux": ["câblage", "clavier", "séquence", "astéroïdes", "consoles à maintien"],
+    "anti-triche": "chaque étape impose une durée minimale vérifiée par le Host, et la présence dans la bonne salle"
+  },
+  "sabotages": {
+    "lumieres": "divise la vision de l'équipage (celle des imposteurs est intacte)",
+    "communications": "masque la liste des tâches, les caméras et l'administration",
+    "reacteur": "45 s — deux pupitres à tenir EN MÊME TEMPS, sinon victoire des imposteurs",
+    "o2": "45 s — deux codes (O2 et Administration), sinon victoire des imposteurs",
+    "portes": "verrouille les portes d'une salle pendant 10 s"
+  },
+  "reunions": "bouton d'urgence (Cafétéria, quota par joueur) ou découverte d'un corps ; discussion puis vote ; égalité = personne n'est éjecté",
+  "victoire": {
+    "equipage": ["toutes les tâches terminées", "tous les imposteurs éjectés"],
+    "imposteurs": ["parité avec l'équipage", "sabotage critique arrivé à terme"]
+  },
+  "parametres": ["imposteurs (1-3)", "vitesse (0,5×-3×)", "vision équipage (0,25×-5×)", "vision imposteur (0,25×-5×)", "cooldown kill (10-60 s)", "distance de kill (courte/normale/longue)", "réunions d'urgence (0-9)", "temps de discussion (0-120 s)", "temps de vote (15-300 s)", "votes anonymes", "confirmation d'éjection", "barre des tâches (toujours/réunions/jamais)", "nombre de tâches courtes/longues/communes"],
+  "controles": "ZQSD/WASD/flèches · F = utiliser · R = signaler · Espace = tuer ; joystick + boutons sur mobile"
+}
