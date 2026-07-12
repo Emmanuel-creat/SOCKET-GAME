@@ -26,7 +26,7 @@
       "joueursMax": 8,
       "etat": "disponible",
       "version": "1.0.0",
-      "auteur": "Manu",
+      "auteur": "Jeremie",
       "module": "index.js",
       "chemin": "/games/cache-cache/",
       "visible": true
@@ -107,19 +107,19 @@
       "visible": true
     },
     {
-      "id": "among-us",
-      "nom": "Among Us",
-      "description": "Accomplissez vos tâches... ou éliminez discrètement l'équipage si vous êtes l'imposteur.",
-      "icone": "🛸",
-      "image": "/games/among-us/assets/cover.png",
-      "joueursMin": 4,
-      "joueursMax": 15,
-      "etat": "en-developpement",
-      "version": "0.0.0",
-      "auteur": "Manu",
-      "module": "index.js",
-      "chemin": "/games/among-us/",
-      "visible": true
+    "id": "among-us",
+    "nom": "Among Us",
+    "description": "Tâches, sabotages et mensonges : trouvez les imposteurs avant qu'ils ne vous éliminent.",
+    "icone": "🛸",
+    "image": "/games/among-us/assets/cover.png",
+    "joueursMin": 4,
+    "joueursMax": 15,
+    "etat": "disponible",
+    "version": "1.0.0",
+    "auteur": "Manu",
+    "module": "index.js",
+    "chemin": "/games/among-us/",
+    "visible": true
     },
     {
       "id": "puissance4",
@@ -176,7 +176,7 @@
       "joueursMax": 16,
       "etat": "disponible",
       "version": "1.2.0",
-      "auteur": "Manu",
+      "auteur": "Nathan",
       "module": "index.js",
       "chemin": "/games/petit-bac/",
       "visible": true
@@ -266,7 +266,7 @@
       "joueursMax": 6,
       "etat": "disponible",
       "version": "1.0.0",
-      "auteur": "Manu",
+      "auteur": "Jeremie",
       "module": "index.js",
       "chemin": "/games/memory/",
       "visible": true
@@ -311,7 +311,7 @@
       "joueursMax": 8,
       "etat": "disponible",
       "version": "1.0.0",
-      "auteur": "Manu",
+      "auteur": "Jeremie",
       "module": "index.js",
       "chemin": "/games/devine-tete/",
       "visible": true
