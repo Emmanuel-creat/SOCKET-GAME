@@ -1,0 +1,20 @@
+{
+  "id": "cache-cache",
+  "nom": "Cache-Cache",
+  "version": "1.0.0",
+  "joueurs": { "min": 2, "max": 8 },
+  "architecture": "host-autoritaire",
+  "communication": "game:message (relais générique du moteur : vues ciblées par joueur + diffusion pour le chat)",
+  "regles": {
+    "principe": "chaque joueur est Chasseur exactement une fois ; une manche = un Chasseur qui recherche tous les autres joueurs",
+    "phases": {
+      "choixCarte": "30s, cacheurs uniquement, sélection privée",
+      "cache": "30s, cacheurs uniquement, choix/personnalisation d'une forme + position, verrouillage privé",
+      "chasse": "30s par carte, ordre aléatoire, -3s par clic, indice de proximité en cas d'échec"
+    },
+    "cartes": 10,
+    "formes": 10,
+    "penaliteClicMs": 3000,
+    "degradeProximite": ["bleu clair", "bleu", "cyan", "vert", "jaune", "orange", "rouge"]
+  }
+}
