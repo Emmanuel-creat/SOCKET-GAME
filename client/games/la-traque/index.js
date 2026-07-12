@@ -1,0 +1,656 @@
+/**
+ * LA TRAQUE — interface du module Arcade (les règles sont dans ./engine.js).
+ *
+ * Host autoritaire temps réel : le Host fait tourner la boucle (20 Hz) et
+ * envoie à chaque joueur une vue FILTRÉE par ce qu'il peut voir. Les autres
+ * clients n'envoient que leurs entrées (direction, visée, tir).
+ *
+ * Le rendu est en <canvas> : obscurité totale, cône de lampe calculé par
+ * lancer de rayons, flashs, bruits. Les murs sont dessinés en très sombre —
+ * le labyrinthe n'est pas un secret, les POSITIONS le sont.
+ */
+import { TraqueEngine, SKINS, COLS, ROWS, TICK_MS, HIDE_CHOICES, ROUND_CHOICES } from './engine.js';
+
+const SEND_EVERY = 2;        // vues envoyées tous les 2 ticks (10 Hz) — lissées à l'écran
+const INPUT_MIN_MS = 60;     // anti-spam des entrées
+const LERP_MS = 110;         // lissage des positions distantes
+const SKIN_KEY = 'arcade.la-traque.skin';
+
+const CSS = `
+.trq { display: grid; grid-template-columns: 1fr 290px; gap: 12px; height: 100%; min-height: 0; color: var(--text, #e8ecff); width: 100%; }
+.trq__main { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; }
+.trq__panel { background: var(--glass, rgba(255,255,255,.05)); border: 1px solid var(--glass-border, rgba(255,255,255,.09)); border-radius: var(--radius-m, 14px); padding: 10px 12px; }
+.trq__hud { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: .86rem; }
+.trq__hud .big { font-weight: 800; font-size: 1.05rem; }
+.trq__hud .danger { color: #ff6b6b; }
+.trq__stage { flex: 1; min-height: 0; position: relative; display: flex; }
+.trq__canvas { width: 100%; height: 100%; display: block; border-radius: 12px; background: #05060a; touch-action: none; cursor: crosshair; }
+.trq__over { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; pointer-events: none; }
+.trq__over div { background: rgba(4,6,12,.78); border: 1px solid var(--glass-border, rgba(255,255,255,.12)); border-radius: 14px; padding: 14px 22px; font-size: 1.05rem; }
+.trq__bar { height: 6px; border-radius: 99px; background: rgba(255,255,255,.12); width: 110px; overflow: hidden; }
+.trq__bar i { display: block; height: 100%; background: #5fe0c8; }
+.trq__fx { display: flex; gap: 5px; }
+.trq__fx span { font-size: .75rem; padding: 2px 7px; border-radius: 99px; background: rgba(95,224,200,.18); border: 1px solid rgba(95,224,200,.4); }
+.trq__pad { position: absolute; inset: auto 0 0 0; display: none; justify-content: space-between; padding: 12px; pointer-events: none; }
+.trq__stick { width: 118px; height: 118px; border-radius: 50%; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.16); position: relative; pointer-events: auto; }
+.trq__stick i { position: absolute; width: 46px; height: 46px; border-radius: 50%; background: rgba(255,255,255,.28); left: 36px; top: 36px; }
+.trq__btns { display: flex; flex-direction: column; gap: 8px; justify-content: flex-end; pointer-events: auto; }
+.trq__btns button { width: 70px; height: 70px; border-radius: 50%; border: 1px solid rgba(255,255,255,.2); background: rgba(255,255,255,.08); color: inherit; font-size: 1.4rem; }
+.trq__setup { display: grid; gap: 8px; max-width: 520px; margin: 0 auto; }
+.trq__setup label, .trq__row { display: flex; gap: 8px; align-items: center; background: rgba(0,0,0,.22); border: 1px solid var(--glass-border, rgba(255,255,255,.1)); border-radius: 10px; padding: 8px 10px; font-size: .85rem; }
+.trq__setup select { margin-left: auto; background: rgba(0,0,0,.35); color: inherit; border: 1px solid rgba(255,255,255,.15); border-radius: 8px; padding: 5px; }
+.trq__skins { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.trq__skins button { border: 2px solid transparent; background: rgba(255,255,255,.06); border-radius: 12px; padding: 8px 10px; color: inherit; cursor: pointer; font-size: .78rem; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.trq__skins button.on { border-color: #fff; }
+.trq__skins .em { font-size: 1.5rem; }
+.trq__side { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.trq__roster { display: flex; flex-direction: column; gap: 4px; font-size: .82rem; }
+.trq__roster div.out { opacity: .42; text-decoration: line-through; }
+.trq__log { font-size: .78rem; color: var(--text-dim, #aab); max-height: 108px; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+.trq-chat { display: flex; flex-direction: column; flex: 1; min-height: 120px; }
+.trq-chat__log { flex: 1; overflow: auto; font-size: .82rem; display: flex; flex-direction: column; gap: 2px; }
+.trq-chat__log .dead { color: #ff9f9f; }
+.trq-chat__form { display: flex; gap: 6px; margin-top: 6px; }
+.trq-chat__form input { flex: 1; min-width: 0; background: rgba(0,0,0,.3); border: 1px solid var(--glass-border, rgba(255,255,255,.12)); color: inherit; border-radius: 8px; padding: 6px 9px; }
+.trq__status { min-height: 1.1em; text-align: center; color: var(--warning, #ffb454); font-size: .82rem; }
+@media (max-width: 1050px) { .trq { grid-template-columns: 1fr; } .trq__pad { display: flex; } }
+`;
+
+function h(tag, props = {}, children = []) {
+  const node = document.createElement(tag);
+  Object.entries(props).forEach(([k, v]) => {
+    if (v === undefined || v === null || v === false) return;
+    if (k === 'className') node.className = v;
+    else if (k === 'style') node.style.cssText = v;
+    else if (k.startsWith('on')) node.addEventListener(k.slice(2).toLowerCase(), v);
+    else node.setAttribute(k, v);
+  });
+  (Array.isArray(children) ? children : [children]).forEach((c) => {
+    if (c === null || c === undefined || c === false) return;
+    node.append(typeof c === 'string' ? document.createTextNode(c) : c);
+  });
+  return node;
+}
+
+const skinOf = (id) => SKINS.find((s) => s.id === id) ?? SKINS[0];
+const mmss = (ms) => {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+const FX_LABEL = { vitesse: '💨 Vitesse', silence: '🤫 Silence', torche: '🔦 Batterie', radar: '👁️ Radar', sonar: '📡 Sonar' };
+
+class TraqueUI {
+  constructor(container, context) {
+    this.container = container;
+    this.ctx = context;
+    this.me = context.me;
+    this.engine = null;
+    this.view = null;
+    this.prev = null;       // vue précédente (pour le lissage)
+    this.viewAt = 0;
+    this.keys = new Set();
+    this.aim = null;
+    this.stick = { active: false, dx: 0, dy: 0, id: null };
+    this.lastSent = 0;
+    this.tickCount = 0;
+    this.raf = null;
+    this.loop = null;
+    this.unsub = null;
+    this.skin = null;
+  }
+
+  get isHost() { return this.ctx.me.id === this.ctx.hostId; }
+  get hostId() { return this.ctx.hostId; }
+
+  /* ------------------------- montage ------------------------- */
+
+  mount() {
+    this.styleEl = h('style', {}, CSS);
+    this.root = h('div', { className: 'trq' });
+    this.container.append(this.styleEl, this.root);
+
+    try { this.skin = localStorage.getItem(SKIN_KEY) || null; } catch { this.skin = null; }
+
+    if (this.isHost) {
+      try {
+        this.engine = new TraqueEngine(this.ctx.players, { hostId: this.ctx.hostId });
+      } catch (error) {
+        this.root.replaceChildren(h('div', { className: 'trq__panel', style: 'margin:auto' }, `⚠️ ${error.message}`));
+        return;
+      }
+      this.unsub = this.ctx.onMessage(({ from, data }) => {
+        if (data?.t !== 'action') return;
+        const res = this.engine.handleAction(from, data.action);
+        if (!res?.ok && res?.error && data.action.a !== 'input') {
+          this.ctx.sendMessage({ t: 'error', message: res.error }, from);
+        }
+      });
+      this.loop = setInterval(() => this.hostTick(), TICK_MS);
+    } else {
+      this.unsub = this.ctx.onMessage(({ from, data }) => {
+        if (from !== this.hostId) return;
+        if (data?.t === 'view') this.receive(data.view);
+        else if (data?.t === 'error') this.status(data.message);
+      });
+    }
+
+    if (this.skin) this.act({ a: 'skin', skin: this.skin });
+    this.bindInputs();
+    this.build();
+    if (this.isHost) this.broadcast();
+    this.raf = requestAnimationFrame(() => this.frame());
+  }
+
+  hostTick() {
+    this.engine.tick();
+    this.tickCount += 1;
+    if (this.tickCount % SEND_EVERY === 0 || this.engine.phase !== 'traque') this.broadcast();
+    if (this.engine.phase === 'fin' && !this.endTimer) {
+      const result = this.engine.summary();
+      this.endTimer = setTimeout(() => this.ctx.onEnd(result), 7000);
+    }
+  }
+
+  broadcast() {
+    for (const p of this.engine.players) {
+      if (p.id === this.me.id) continue;
+      this.ctx.sendMessage({ t: 'view', view: this.engine.getViewFor(p.id) }, p.id);
+    }
+    this.receive(this.engine.getViewFor(this.me.id));
+  }
+
+  receive(view) {
+    this.prev = this.view;
+    this.view = view;
+    this.viewAt = performance.now();
+    const phase = view.phase;
+    if (phase !== this.lastPhase) { this.lastPhase = phase; this.build(); }
+    this.syncHud();
+  }
+
+  act(action) {
+    if (this.isHost) {
+      const res = this.engine.handleAction(this.me.id, action);
+      if (!res?.ok && res?.error && action.a !== 'input') this.status(res.error);
+      if (action.a !== 'input') this.broadcast();
+    } else {
+      this.ctx.sendMessage({ t: 'action', action }, this.hostId);
+    }
+  }
+
+  status(message) {
+    if (!this.statusEl) return;
+    this.statusEl.textContent = message ?? '';
+    clearTimeout(this.statusTimer);
+    this.statusTimer = setTimeout(() => { if (this.statusEl) this.statusEl.textContent = ''; }, 3500);
+  }
+
+  /* ------------------------- entrées ------------------------- */
+
+  bindInputs() {
+    this.onKeyDown = (e) => {
+      const k = e.code;
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(k)) e.preventDefault();
+      if (k === 'Space') { this.act({ a: 'shoot' }); return; }
+      this.keys.add(k);
+      this.sendInput();
+    };
+    this.onKeyUp = (e) => { this.keys.delete(e.code); this.sendInput(); };
+    window.addEventListener('keydown', this.onKeyDown);
+    window.addEventListener('keyup', this.onKeyUp);
+  }
+
+  axis() {
+    if (this.stick.active) return { dx: this.stick.dx, dy: this.stick.dy };
+    const k = this.keys;
+    const dx = (k.has('ArrowRight') || k.has('KeyD') ? 1 : 0) - (k.has('ArrowLeft') || k.has('KeyA') || k.has('KeyQ') ? 1 : 0);
+    const dy = (k.has('ArrowDown') || k.has('KeyS') ? 1 : 0) - (k.has('ArrowUp') || k.has('KeyW') || k.has('KeyZ') ? 1 : 0);
+    return { dx, dy };
+  }
+
+  sendInput(force = false) {
+    const now = performance.now();
+    if (!force && now - this.lastSent < INPUT_MIN_MS) return;
+    this.lastSent = now;
+    const { dx, dy } = this.axis();
+    this.act({
+      a: 'input',
+      dx, dy,
+      aim: this.aim,
+      sneak: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') || this.sneakBtn,
+      sprint: this.keys.has('ControlLeft') || this.keys.has('KeyE') || this.sprintBtn,
+    });
+  }
+
+  /* ------------------------- construction du DOM ------------------------- */
+
+  build() {
+    const v = this.view;
+    this.statusEl = h('div', { className: 'trq__status' });
+
+    if (!v || v.phase === 'setup') { this.root.replaceChildren(this.buildSetup(), this.buildSide()); return; }
+    if (v.phase === 'fin' || v.phase === 'fin-manche') { this.root.replaceChildren(this.buildEnd(), this.buildSide()); return; }
+
+    this.canvas = h('canvas', { className: 'trq__canvas' });
+    this.overlay = h('div', { className: 'trq__over' });
+    this.bindCanvas();
+
+    this.hudEl = h('div', { className: 'trq__panel trq__hud' });
+    const stage = h('div', { className: 'trq__stage' }, [this.canvas, this.overlay, this.buildPad()]);
+    this.root.replaceChildren(
+      h('div', { className: 'trq__main' }, [this.hudEl, stage, this.statusEl]),
+      this.buildSide(),
+    );
+    this.syncHud();
+  }
+
+  buildSetup() {
+    const v = this.view;
+    const body = [h('h3', { style: 'margin:0;text-align:center' }, '🔦 La Traque')];
+    body.push(h('div', { style: 'text-align:center;font-size:.86rem;color:var(--text-dim,#aab);max-width:520px;margin:0 auto' },
+      'Labyrinthe plongé dans le noir. Le Chercheur ne voit que le cône de sa lampe et dispose de munitions comptées. Les autres se cachent : rester immobile, c\'est rester invisible — mais les détecteurs trahissent ceux qui bougent.'));
+
+    // Skins : choix local, mémorisé, transmis à la table.
+    const current = this.skin ?? (v?.me?.skin ?? SKINS[0].id);
+    body.push(h('div', { className: 'trq__skins' }, SKINS.map((s) => h('button', {
+      className: s.id === current ? 'on' : '',
+      onClick: () => {
+        this.skin = s.id;
+        try { localStorage.setItem(SKIN_KEY, s.id); } catch { /* stockage indisponible */ }
+        this.act({ a: 'skin', skin: s.id });
+        this.build();
+      },
+    }, [h('span', { className: 'em' }, s.emoji), h('span', { style: `color:${s.couleur}` }, s.nom)]))));
+
+    if (this.isHost && v) {
+      const box = h('div', { className: 'trq__setup' });
+      const sel = (label, key, choices, fmt) => {
+        const s = h('select', {}, choices.map((c) => h('option', { value: String(c) }, fmt(c))));
+        s.value = String(v.options[key]);
+        s.addEventListener('change', () => this.act({ a: 'configure', options: { [key]: key === 'mode' ? s.value : Number(s.value) } }));
+        return h('div', { className: 'trq__row' }, [h('b', {}, label), s]);
+      };
+      const check = (key, label, hint) => {
+        const cb = h('input', { type: 'checkbox' });
+        cb.checked = !!v.options[key];
+        cb.addEventListener('change', () => this.act({ a: 'configure', options: { [key]: cb.checked } }));
+        return h('label', {}, [cb, h('span', {}, [h('b', {}, label), h('div', { style: 'font-size:.78rem;color:var(--text-dim,#aab)' }, hint)])]);
+      };
+      const modeSel = h('select', {}, [
+        h('option', { value: 'rotation' }, 'Rotation (chacun chercheur)'),
+        h('option', { value: 'unique' }, 'Manche unique'),
+      ]);
+      modeSel.value = v.options.mode;
+      modeSel.addEventListener('change', () => this.act({ a: 'configure', options: { mode: modeSel.value } }));
+
+      box.append(
+        h('div', { className: 'trq__row' }, [h('b', {}, 'Déroulement'), modeSel]),
+        sel('Temps de cachette', 'hideMs', HIDE_CHOICES, (c) => `${c / 1000} s`),
+        sel('Durée de la traque', 'roundMs', ROUND_CHOICES, (c) => `${c / 60000} min`),
+        sel('Balles par joueur', 'ballesParJoueur', [1, 2, 3], (c) => `×${c} (soit ${c * v.roster.length} balles)`),
+        check('detecteurs', 'Détecteurs', 'Des capteurs déclenchent un flash révélant qui passe à proximité.'),
+        check('bonus', 'Boîtes mystère', 'Bonus ramassables : l\'effet dépend de votre rôle.'),
+      );
+      body.push(box, h('div', { style: 'text-align:center' }, [
+        h('button', { className: 'btn btn--primary', onClick: () => this.act({ a: 'start' }) }, '🔦 Lancer la traque'),
+      ]));
+    } else {
+      body.push(h('div', { style: 'text-align:center;color:var(--text-dim,#aab);font-size:.85rem' }, 'Choisissez votre tenue — le Host règle la partie…'));
+    }
+    return h('div', { className: 'trq__main' }, [h('div', { className: 'trq__panel', style: 'margin:auto;display:grid;gap:12px' }, body), this.statusEl]);
+  }
+
+  buildEnd() {
+    const v = this.view;
+    const body = [];
+    if (v.phase === 'fin') {
+      const f = v.finalSummary;
+      body.push(h('h3', { style: 'margin:0' }, f.summary));
+      body.push(h('div', { style: 'color:var(--text-dim,#aab)' }, f.classement.map((p) => `${p.pseudo} : ${p.score}`).join(' · ')));
+      body.push(h('div', { style: 'color:var(--text-dim,#aab)' }, 'Retour au salon dans quelques secondes…'));
+    } else {
+      const r = v.roundEnd;
+      body.push(h('h3', { style: 'margin:0' }, r.vainqueur === 'chercheur'
+        ? `🏆 ${r.seekerName} a fait le ménage : le Chercheur gagne.`
+        : `⏰ Temps écoulé — ${r.survivants.length} survivant(s) l'emportent !`));
+      body.push(h('div', { style: 'color:var(--text-dim,#aab)' }, `${r.elims} élimination(s) · Survivants : ${r.survivants.map((s) => s.pseudo).join(', ') || 'aucun'}`));
+      body.push(h('div', { style: 'color:var(--text-dim,#aab)' }, `Scores : ${r.scores.map((s) => `${s.pseudo} ${s.score}`).join(' · ')}`));
+      body.push(this.isHost
+        ? h('button', { className: 'btn btn--primary', onClick: () => this.act({ a: 'next-round' }) }, '▶️ Manche suivante')
+        : h('div', { style: 'color:var(--text-dim,#aab)' }, 'Le Host va lancer la manche suivante…'));
+    }
+    return h('div', { className: 'trq__main' }, [
+      h('div', { className: 'trq__panel', style: 'margin:auto;display:grid;gap:10px;text-align:center' }, body),
+      this.statusEl,
+    ]);
+  }
+
+  buildPad() {
+    const stick = h('div', { className: 'trq__stick' });
+    const knob = h('i');
+    stick.append(knob);
+    const setKnob = (dx, dy) => { knob.style.left = `${36 + dx * 30}px`; knob.style.top = `${36 + dy * 30}px`; };
+    const move = (e) => {
+      const r = stick.getBoundingClientRect();
+      const dx = (e.clientX - (r.left + r.width / 2)) / (r.width / 2);
+      const dy = (e.clientY - (r.top + r.height / 2)) / (r.height / 2);
+      const len = Math.hypot(dx, dy) || 1;
+      const nx = len > 1 ? dx / len : dx;
+      const ny = len > 1 ? dy / len : dy;
+      this.stick = { active: true, dx: nx, dy: ny, id: e.pointerId };
+      setKnob(nx, ny);
+      this.sendInput();
+    };
+    stick.addEventListener('pointerdown', (e) => { stick.setPointerCapture(e.pointerId); move(e); });
+    stick.addEventListener('pointermove', (e) => { if (this.stick.active && e.pointerId === this.stick.id) move(e); });
+    const release = () => { this.stick = { active: false, dx: 0, dy: 0, id: null }; setKnob(0, 0); this.sendInput(true); };
+    stick.addEventListener('pointerup', release);
+    stick.addEventListener('pointercancel', release);
+
+    const sneak = h('button', { title: 'Furtif' }, '🤫');
+    sneak.addEventListener('pointerdown', () => { this.sneakBtn = true; this.sendInput(true); });
+    sneak.addEventListener('pointerup', () => { this.sneakBtn = false; this.sendInput(true); });
+    const sprint = h('button', { title: 'Sprint' }, '💨');
+    sprint.addEventListener('pointerdown', () => { this.sprintBtn = true; this.sendInput(true); });
+    sprint.addEventListener('pointerup', () => { this.sprintBtn = false; this.sendInput(true); });
+    const fire = h('button', { title: 'Tirer', onClick: () => this.act({ a: 'shoot' }) }, '🔫');
+
+    return h('div', { className: 'trq__pad' }, [stick, h('div', { className: 'trq__btns' }, [sneak, sprint, fire])]);
+  }
+
+  bindCanvas() {
+    // Viser à la souris (le cône suit le curseur) ; taper l'écran vise aussi.
+    const aimAt = (e) => {
+      const v = this.view;
+      if (!v?.me) return;
+      const r = this.canvas.getBoundingClientRect();
+      const { tile, ox, oy } = this.geom(r);
+      const wx = (e.clientX - r.left - ox) / tile;
+      const wy = (e.clientY - r.top - oy) / tile;
+      this.aim = Math.atan2(wy - v.me.y, wx - v.me.x);
+      this.sendInput();
+    };
+    this.canvas.addEventListener('pointermove', aimAt);
+    this.canvas.addEventListener('pointerdown', (e) => { aimAt(e); if (this.view?.me?.role === 'chercheur') this.act({ a: 'shoot' }); });
+  }
+
+  buildSide() {
+    const v = this.view;
+    this.rosterEl = h('div', { className: 'trq__roster' });
+    this.logEl = h('div', { className: 'trq__log' });
+
+    this.chatLog = h('div', { className: 'trq-chat__log' });
+    const input = h('input', { placeholder: 'Message…', maxlength: '200' });
+    const send = () => {
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+      this.act({ a: 'chat', text });
+    };
+    input.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') send(); });
+    input.addEventListener('keyup', (e) => e.stopPropagation());
+
+    const side = h('div', { className: 'trq__side' }, [
+      h('div', { className: 'trq__panel' }, [h('strong', {}, '👥 Joueurs'), this.rosterEl]),
+      h('div', { className: 'trq__panel' }, [h('strong', {}, '📜 Journal'), this.logEl]),
+      h('div', { className: 'trq__panel trq-chat' }, [
+        h('strong', {}, v?.ghost ? '💬 Chat des éliminés' : '💬 Chat'),
+        this.chatLog,
+        h('div', { className: 'trq-chat__form' }, [input, h('button', { className: 'btn btn--small btn--primary', onClick: send }, '➤')]),
+      ]),
+    ]);
+    this.syncSide();
+    return side;
+  }
+
+  /* ------------------------- HUD & panneaux ------------------------- */
+
+  syncHud() {
+    const v = this.view;
+    if (!v || !this.hudEl || !v.me) return;
+    const me = v.me;
+    const seeker = me.role === 'chercheur';
+    const restants = v.roster.filter((p) => p.role === 'cache' && p.alive).length;
+    const bits = [
+      h('span', { className: 'big' }, seeker ? '🔦 Vous êtes le CHERCHEUR' : '🫥 Vous êtes CACHÉ'),
+      h('span', { className: v.timeLeft < 30000 && v.phase === 'traque' ? 'big danger' : 'big' }, `⏱️ ${mmss(v.timeLeft)}`),
+      h('span', {}, v.phase === 'cachette' ? '🙈 Cachette en cours' : `🫥 ${restants} caché(s) en vie`),
+    ];
+    if (seeker) bits.push(h('span', {}, `🔫 ${me.bullets} balle${me.bullets > 1 ? 's' : ''}`));
+    if (!me.alive) bits.push(h('span', { className: 'danger' }, '💀 Éliminé — mode spectateur'));
+    bits.push(h('span', {}, ['💪 ', h('span', { className: 'trq__bar' }, h('i', { style: `width:${Math.round(me.stamina)}%` }))]));
+    const fx = Object.keys(me.effects ?? {});
+    if (fx.length) bits.push(h('span', { className: 'trq__fx' }, fx.map((k) => h('span', {}, FX_LABEL[k] ?? k))));
+    this.hudEl.replaceChildren(...bits);
+
+    if (this.overlay) {
+      const msg = v.phase === 'cachette'
+        ? (seeker ? '🙈 Vous comptez… (lampe éteinte)' : `🏃 Cachez-vous ! ${mmss(v.timeLeft)}`)
+        : null;
+      this.overlay.replaceChildren(...(msg ? [h('div', {}, msg)] : []));
+    }
+    this.syncSide();
+  }
+
+  syncSide() {
+    const v = this.view;
+    if (!v || !this.rosterEl) return;
+    this.rosterEl.replaceChildren(...v.roster.map((p) => {
+      const s = skinOf(p.skin);
+      return h('div', { className: p.alive ? '' : 'out' }, [
+        h('span', {}, `${s.emoji} `),
+        h('b', { style: `color:${s.couleur}` }, p.pseudo),
+        h('span', { style: 'color:var(--text-dim,#aab)' }, `${p.role === 'chercheur' ? ' 🔦' : ''} — ${p.score} pts`),
+      ]);
+    }));
+    this.logEl.replaceChildren(...[...(v.log ?? [])].reverse().map((l) => h('div', {}, l)));
+
+    const msgs = v.ghost ? [...(v.chat ?? []), ...(v.deadChat ?? []).map((m) => ({ ...m, dead: true }))] : (v.chat ?? []);
+    msgs.sort((a, b) => a.ts - b.ts);
+    this.chatLog.replaceChildren(...msgs.map((m) => h('div', { className: m.dead ? 'dead' : '' }, [
+      h('b', {}, `${m.dead ? '💀 ' : ''}${m.pseudo} `), m.text,
+    ])));
+    this.chatLog.scrollTop = this.chatLog.scrollHeight;
+  }
+
+  /* ------------------------- rendu ------------------------- */
+
+  geom(rect) {
+    const tile = Math.min(rect.width / COLS, rect.height / ROWS);
+    return { tile, ox: (rect.width - tile * COLS) / 2, oy: (rect.height - tile * ROWS) / 2 };
+  }
+
+  frame() {
+    this.raf = requestAnimationFrame(() => this.frame());
+    const v = this.view;
+    if (!this.canvas || !v || !v.grid || !v.me) return;
+
+    const rect = this.canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    if (this.canvas.width !== Math.round(rect.width * dpr)) {
+      this.canvas.width = Math.round(rect.width * dpr);
+      this.canvas.height = Math.round(rect.height * dpr);
+    }
+    const g = this.canvas.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const { tile, ox, oy } = this.geom(rect);
+    const X = (wx) => ox + wx * tile;
+    const Y = (wy) => oy + wy * tile;
+
+    g.clearRect(0, 0, rect.width, rect.height);
+    g.fillStyle = '#05060a';
+    g.fillRect(0, 0, rect.width, rect.height);
+
+    // Murs : dessinés très sombres. Le labyrinthe n'est pas un secret — les
+    // positions le sont — et sans repères on ne peut pas jouer.
+    g.fillStyle = 'rgba(120,140,200,.10)';
+    for (let y = 0; y < ROWS; y += 1) {
+      for (let x = 0; x < COLS; x += 1) {
+        if (v.grid[y][x] === '1') g.fillRect(X(x), Y(y), tile + 0.5, tile + 0.5);
+      }
+    }
+
+    const lerp = (a, b) => {
+      const k = Math.min(1, (performance.now() - this.viewAt) / LERP_MS);
+      return a + (b - a) * k;
+    };
+    const smooth = (ent) => {
+      const old = this.prev?.visibles?.find((o) => o.id === ent.id);
+      return old ? { x: lerp(old.x, ent.x), y: lerp(old.y, ent.y) } : { x: ent.x, y: ent.y };
+    };
+
+    // Halo du joueur (sa propre bulle de perception).
+    const me = v.me;
+    if (me.alive) {
+      const r = (me.role === 'chercheur' ? 1.3 : 1.6) * tile;
+      const grd = g.createRadialGradient(X(me.x), Y(me.y), 0, X(me.x), Y(me.y), r);
+      grd.addColorStop(0, 'rgba(180,200,255,.16)');
+      grd.addColorStop(1, 'rgba(180,200,255,0)');
+      g.fillStyle = grd;
+      g.beginPath(); g.arc(X(me.x), Y(me.y), r, 0, Math.PI * 2); g.fill();
+    }
+
+    // Cônes de lampe : le mien si je cherche, celui du Chercheur si je le vois.
+    const cones = [];
+    if (me.role === 'chercheur' && me.alive) cones.push({ x: me.x, y: me.y, angle: me.angle, boost: !!me.effects?.torche });
+    for (const e of v.visibles ?? []) {
+      if (e.role === 'chercheur') { const s = smooth(e); cones.push({ x: s.x, y: s.y, angle: e.angle, boost: e.torche }); }
+    }
+    for (const c of cones) this.drawCone(g, v, c, X, Y, tile);
+
+    // Flashs des détecteurs : ils éclairent tout le monde dans leur rayon.
+    for (const f of v.flashes ?? []) {
+      const grd = g.createRadialGradient(X(f.x), Y(f.y), 0, X(f.x), Y(f.y), 3.6 * tile);
+      grd.addColorStop(0, 'rgba(255,255,255,.55)');
+      grd.addColorStop(.6, 'rgba(200,225,255,.22)');
+      grd.addColorStop(1, 'rgba(200,225,255,0)');
+      g.fillStyle = grd;
+      g.beginPath(); g.arc(X(f.x), Y(f.y), 3.6 * tile, 0, Math.PI * 2); g.fill();
+    }
+
+    // Détecteurs connus.
+    for (const d of v.detectors ?? []) {
+      g.fillStyle = d.actif ? 'rgba(255,90,90,.85)' : 'rgba(120,120,140,.5)';
+      g.fillRect(X(d.x) - tile * .16, Y(d.y) - tile * .16, tile * .32, tile * .32);
+    }
+
+    // Boîtes mystère.
+    for (const b of v.bonuses ?? []) {
+      g.font = `${Math.round(tile * .8)}px serif`;
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText('❓', X(b.x), Y(b.y));
+    }
+
+    // Bruits entendus (Chercheur) : une case, pas une position exacte.
+    for (const nz of v.noises ?? []) {
+      g.strokeStyle = 'rgba(255,200,120,.5)';
+      g.lineWidth = 2;
+      g.beginPath(); g.arc(X(nz.x), Y(nz.y), tile * .55, 0, Math.PI * 2); g.stroke();
+      g.font = `${Math.round(tile * .5)}px serif`;
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText('👣', X(nz.x), Y(nz.y));
+    }
+
+    // Balles.
+    g.fillStyle = '#ffe08a';
+    for (const s of v.shots ?? []) { g.beginPath(); g.arc(X(s.x), Y(s.y), Math.max(2, tile * .12), 0, Math.PI * 2); g.fill(); }
+
+    // Joueurs visibles + moi.
+    for (const e of v.visibles ?? []) { const s = smooth(e); this.drawPlayer(g, e, s.x, s.y, X, Y, tile, false); }
+    if (me.alive) this.drawPlayer(g, { ...me, how: 'moi' }, me.x, me.y, X, Y, tile, true);
+
+    if (!me.alive) {
+      g.fillStyle = 'rgba(255,255,255,.35)';
+      g.font = `${Math.round(tile * .9)}px sans-serif`;
+      g.textAlign = 'center';
+      g.fillText('💀', X(me.x), Y(me.y));
+    }
+  }
+
+  /** Cône de lampe par lancer de rayons : la lumière s'arrête aux murs. */
+  drawCone(g, v, c, X, Y, tile) {
+    const range = c.boost ? v.cone.rangeBonus : v.cone.range;
+    const half = ((c.boost ? v.cone.halfBonus : v.cone.half) * Math.PI) / 180;
+    const RAYS = 54;
+    const pts = [];
+    for (let i = 0; i <= RAYS; i += 1) {
+      const a = c.angle - half + (2 * half * i) / RAYS;
+      let d = 0;
+      const step = 0.12;
+      while (d < range) {
+        const nx = c.x + Math.cos(a) * (d + step);
+        const ny = c.y + Math.sin(a) * (d + step);
+        if (v.grid[Math.floor(ny)]?.[Math.floor(nx)] !== '0') break;
+        d += step;
+      }
+      pts.push([c.x + Math.cos(a) * d, c.y + Math.sin(a) * d]);
+    }
+    const grd = g.createRadialGradient(X(c.x), Y(c.y), 0, X(c.x), Y(c.y), range * tile);
+    grd.addColorStop(0, 'rgba(255,240,190,.55)');
+    grd.addColorStop(.55, 'rgba(255,235,180,.22)');
+    grd.addColorStop(1, 'rgba(255,230,170,0)');
+    g.fillStyle = grd;
+    g.beginPath();
+    g.moveTo(X(c.x), Y(c.y));
+    for (const [px, py] of pts) g.lineTo(X(px), Y(py));
+    g.closePath();
+    g.fill();
+  }
+
+  drawPlayer(g, e, x, y, X, Y, tile, isMe) {
+    const s = skinOf(e.skin);
+    // Révélé par un flash ou un sonar : silhouette éclatante et fugace.
+    const glow = e.how === 'flash' || e.how === 'sonar' || e.how === 'radar';
+    g.beginPath();
+    g.arc(X(x), Y(y), tile * .34, 0, Math.PI * 2);
+    g.fillStyle = glow ? 'rgba(255,255,255,.9)' : s.couleur;
+    g.globalAlpha = isMe ? 1 : .92;
+    g.fill();
+    g.globalAlpha = 1;
+    if (isMe) { g.strokeStyle = '#fff'; g.lineWidth = 2; g.stroke(); }
+    g.font = `${Math.round(tile * .55)}px serif`;
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(s.emoji, X(x), Y(y));
+    if (e.role === 'chercheur') {
+      g.strokeStyle = 'rgba(255,240,190,.9)';
+      g.lineWidth = 2;
+      g.beginPath();
+      g.moveTo(X(x), Y(y));
+      g.lineTo(X(x + Math.cos(e.angle) * .8), Y(y + Math.sin(e.angle) * .8));
+      g.stroke();
+    }
+    if (!isMe) {
+      g.fillStyle = 'rgba(255,255,255,.75)';
+      g.font = `${Math.round(tile * .34)}px sans-serif`;
+      g.fillText(e.pseudo, X(x), Y(y) - tile * .55);
+    }
+  }
+
+  unmount() {
+    this.unsub?.();
+    clearInterval(this.loop);
+    cancelAnimationFrame(this.raf);
+    clearTimeout(this.endTimer);
+    clearTimeout(this.statusTimer);
+    window.removeEventListener('keydown', this.onKeyDown);
+    window.removeEventListener('keyup', this.onKeyUp);
+    this.styleEl?.remove();
+    this.root?.remove();
+    this.engine = null;
+    this.statusEl = null;
+  }
+}
+
+let instance = null;
+
+export default {
+  async mount(container, context) {
+    instance = new TraqueUI(container, context);
+    instance.mount();
+  },
+  async unmount() {
+    instance?.unmount();
+    instance = null;
+  },
+};

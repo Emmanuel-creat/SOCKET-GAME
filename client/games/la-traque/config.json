@@ -1,0 +1,26 @@
+{
+  "id": "la-traque",
+  "nom": "La Traque",
+  "version": "1.0.0",
+  "joueurs": { "min": 2, "max": 10 },
+  "architecture": "host-autoritaire temps réel (tick 50 ms), vues filtrées par la visibilité de chaque joueur",
+  "communication": "game:message — vues personnalisées ciblées (10 Hz) + entrées ciblées vers le Host",
+  "principe": "Labyrinthe vu de dessus, obscurité totale. Le Chercheur ne voit que le cône de sa lampe ; les autres se cachent dans le noir.",
+  "regles": {
+    "cachette": "temps de cachette réglable (10/20/30 s) pendant lequel le Chercheur est figé et aveugle",
+    "vision": "cône de 64° sur 7,5 cases, arrêté par les murs ; perception au contact sur 1,3 case",
+    "detecteurs": "capteurs disséminés : un flash de 0,9 s révèle à TOUS les joueurs situés dans un rayon de 3,6 cases (cooldown 6 s)",
+    "bruit": "marcher émet un bruit entendu par le Chercheur (rayon 4,5 cases ; 8 en sprint), flouté à la case ; la marche furtive est silencieuse",
+    "munitions": "2 × le nombre de joueurs par défaut (réglable ×1 à ×3)",
+    "elimination": "balle (arrêtée par les murs) ou capture au contact",
+    "victoire": "le Chercheur gagne s'il élimine tous les cachés ; sinon les survivants l'emportent au chrono (3/4/6 min)"
+  },
+  "bonus": {
+    "principe": "boîtes mystère ❓ : l'effet dépend du rôle de celui qui la ramasse",
+    "chercheur": ["+2 balles", "🔦 batterie (cône élargi 92°, portée 11,5 cases)", "💨 vitesse", "📡 sonar (révèle les cachés à 9 cases, murs compris)"],
+    "caches": ["💨 vitesse", "🤫 silence (aucun bruit)", "👁️ radar (position du Chercheur)", "📣 leurre (flash factice au loin)"]
+  },
+  "modes": { "rotation": "chaque joueur est Chercheur une fois, classement cumulé", "unique": "une seule manche" },
+  "skins": ["ombre", "renard", "spectre", "corbeau", "taupe", "panthère"],
+  "controles": "ZQSD/WASD/flèches, Maj = furtif, Ctrl ou E = sprint, souris = visée, Espace ou clic = tir ; joystick + boutons tactiles sur mobile"
+}

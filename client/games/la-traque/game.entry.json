@@ -1,0 +1,15 @@
+{
+  "id": "la-traque",
+  "nom": "La Traque",
+  "description": "Labyrinthe plongé dans le noir : une lampe torche, des balles comptées, un chrono. Restez immobiles.",
+  "icone": "🔦",
+  "image": "/games/la-traque/assets/cover.png",
+  "joueursMin": 2,
+  "joueursMax": 10,
+  "etat": "disponible",
+  "version": "1.0.0",
+  "auteur": "Manu",
+  "module": "index.js",
+  "chemin": "/games/la-traque/",
+  "visible": true
+}
