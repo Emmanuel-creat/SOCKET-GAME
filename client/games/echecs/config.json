@@ -1,0 +1,18 @@
+{
+  "id": "echecs",
+  "nom": "Échecs",
+  "version": "1.0.0",
+  "joueurs": { "min": 1, "max": 2 },
+  "architecture": "host-autoritaire (partie en ligne) + moteur 100% local (solo / IA / canapé)",
+  "communication": "game:message (relais générique du moteur)",
+  "modes": ["solo vs IA", "deux joueurs sur le même écran", "en ligne à 2 (salon)"],
+  "regles": {
+    "complet": ["roque petit/grand", "prise en passant", "promotion (choix)", "pat", "échec et mat", "règle des 50 coups", "répétition x3", "matériel insuffisant"],
+    "notation": "SAN + export PGN/FEN, import PGN/FEN"
+  },
+  "ia": {
+    "algorithme": "négamax + élagage alpha-bêta + quiescence, approfondissement itératif borné en temps",
+    "niveaux": ["debutant", "facile", "moyen", "difficile", "expert"],
+    "execution": "Web Worker dédié (repli local si Worker indisponible)"
+  }
+}
