@@ -1,0 +1,15 @@
+{
+  "id": "uno",
+  "nom": "UNO",
+  "description": "Cartes, +2, jokers et coups bas : videz votre main… et n'oubliez pas de crier UNO !",
+  "icone": "🃏",
+  "image": "/games/uno/assets/cover.png",
+  "joueursMin": 2,
+  "joueursMax": 10,
+  "etat": "disponible",
+  "version": "1.0.0",
+  "auteur": "Manu",
+  "module": "index.js",
+  "chemin": "/games/uno/",
+  "visible": true
+}

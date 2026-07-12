@@ -1,0 +1,23 @@
+{
+  "id": "uno",
+  "nom": "UNO",
+  "version": "1.0.0",
+  "joueurs": { "min": 2, "max": 10 },
+  "architecture": "host-autoritaire (moteur pur chez le Host, mains privées jamais diffusées)",
+  "communication": "game:message — vues personnalisées ciblées + actions ciblées vers le Host",
+  "regles": {
+    "paquet": "108 cartes : par couleur un 0, deux 1-9, deux Passe, deux Inversion, deux +2 ; plus 4 Jokers et 4 Jokers +4",
+    "distribution": "7 cartes, première carte retournée avec effet (jamais un +4)",
+    "effets": "Passe, Inversion (= Passe à 2 joueurs), +2, Joker (choix de couleur), Joker +4 (contestable)",
+    "uno": "annonce à l'avant-dernière carte ; oubli = fenêtre de 6 s pendant laquelle n'importe qui peut crier « Contre-UNO » (2 cartes de pénalité)",
+    "defi4": "le +4 se joue en bluff : si le poseur avait la couleur en cours, il pioche à la place du contestataire et lui montre sa main ; sinon le contestataire pioche 6 et perd son tour",
+    "pioche": "défausse remélangée quand la pioche est vide",
+    "score": "le premier à vider sa main marque les cartes des autres (chiffres = valeur, Passe/Inversion/+2 = 20, Jokers = 50) ; premier au score cible"
+  },
+  "variantes": {
+    "cumul": "un +2 se contre par un +2, un +4 par un +4 (pénalités additionnées)",
+    "piochePuisJoue": "la carte piochée peut être jouée dans la foulée",
+    "defi4": "contestation du Joker +4 activable",
+    "scoreCible": [100, 200, 500]
+  }
+}
