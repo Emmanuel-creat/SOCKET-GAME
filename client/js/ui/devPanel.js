@@ -159,9 +159,9 @@ class DevPanel {
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') valider(); });
 
     this.root.replaceChildren(h('div', { className: 'dev__auth' }, [
-      h('h2', { style: 'text-align:center;margin:0' }, '🔐 Espace programmeur'),
+      h('h2', { style: 'text-align:center;margin:0' }, 'Espace programmeur'),
       h('p', { style: 'text-align:center;color:#99a;font-size:.85rem;margin:0' },
-        'Accès restreint. Le code est vérifié par le serveur ; cinq essais par adresse IP, puis blocage temporaire.'),
+        'Accès restreint. Réservé au propriétaire du site.'),
       input,
       this.errEl,
       h('div', { style: 'display:flex;gap:8px;justify-content:center' }, [
@@ -252,7 +252,7 @@ class DevPanel {
 
     this.root.replaceChildren(
       h('div', { className: 'dev__top' }, [
-        h('h2', {}, '🛠️ Espace programmeur'),
+        h('h2', {}, 'Espace programmeur'),
         h('span', { className: 'dev__tag' }, 'accès restreint'),
         h('span', { style: 'color:#778;font-size:.8rem' },
           `${s.serveur.plateforme} · ${s.serveur.coeurs} cœur(s) · PID ${s.serveur.pid} · ${mem.systemeLibre} Mo libres / ${mem.systemeTotal} Mo`),
@@ -260,12 +260,12 @@ class DevPanel {
       ]),
       kpis,
       h('div', { className: 'dev__panel' }, [
-        h('h3', {}, `👥 Clients connectés (${s.clients.length})`),
+        h('h3', {}, `Clients connectés (${s.clients.length})`),
         tClients,
       ]),
-      h('div', { className: 'dev__panel' }, [h('h3', {}, `🚪 Salons (${s.salons.length})`), tSalons]),
+      h('div', { className: 'dev__panel' }, [h('h3', {}, `Salons (${s.salons.length})`), tSalons]),
       h('div', { className: 'dev__panel' }, [
-        h('h3', {}, '📈 Historique (3 dernières minutes)'),
+        h('h3', {}, 'Historique (3 min)'),
         h('div', { className: 'dev__charts' }, [
           chart('Clients connectés', hist.map((p) => p.clients), '#38fedc', ''),
           chart('Ping moyen', hist.map((p) => p.rttMoy), '#ffb454', ' ms'),
@@ -274,7 +274,7 @@ class DevPanel {
         ]),
       ]),
       h('p', { style: 'color:#667;font-size:.78rem' },
-        'Les adresses IP sont des données personnelles : ne diffusez pas cette page, et changez le code par la variable d\'environnement ADMIN_CODE.'),
+        'Propriétaire : Emmanuel BAILLY    Coprogrammeurs : Nathan GALLINIER et Jérémie PRESUTTO.'),
     );
   }
 }
