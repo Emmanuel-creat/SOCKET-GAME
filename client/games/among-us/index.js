@@ -5,7 +5,8 @@
  * son rôle uniquement, et seulement ce que sa vision atteint. Les autres
  * clients n'envoient que des intentions (déplacement, kill, tâche, vote…).
  */
-import { AmongEngine, ROOMS, TICK_MS } from './engine.js';
+import { AmongEngine, ROOMS, TICK_MS, stepCollision } from './engine.js';
+import { Predictor } from '../shared/predictor.js';
 
 /**
  * Budget serveur. Sur Render Free (0,1 CPU), ce qui coûte au serveur, c'est le
@@ -124,6 +125,8 @@ class AmongUI {
     this.syncMap = new Map();                          // Host : ce que chaque joueur possède
     this.mapLayer = null;                              // carte pré-dessinée (elle ne bouge pas)
     this.sideSig = null;
+    // Prédiction locale : l'invité avance tout de suite, sans attendre le Host.
+    this.pred = new Predictor(stepCollision);
   }
 
   get isHost() { return this.ctx.me.id === this.ctx.hostId; }
@@ -233,6 +236,19 @@ class AmongUI {
     this.prev = this.view;
     this.view = complete;
     this.viewAt = performance.now();
+
+    // --- prédiction locale : on se recale sur la vérité du Host ---
+    const moi = complete.me;
+    if (moi && !this.isHost) {
+      if (complete.phase !== 'jeu' || moi.vented) this.pred.reset(moi.x, moi.y);
+      else {
+        const fermees = new Set();
+        for (const d of complete.doorsClosed ?? []) for (const c of d.tiles) fermees.add(`${c.x},${c.y}`);
+        this.pred.reconcilier(complete.t, moi,
+          (x, y) => complete.grid?.[y]?.[x] !== '0' || fermees.has(`${x},${y}`), !moi.alive);
+      }
+    }
+
     const key = `${complete.phase}|${complete.meeting?.etape ?? ''}`;
     if (key !== this.lastKey) {
       this.lastKey = key;
@@ -242,6 +258,18 @@ class AmongUI {
       this.build();
     }
     this.sync();
+  }
+
+  /**
+   * Ma position À L'ÉCRAN. Le Host EST la vérité et s'affiche tel quel ; l'invité
+   * affiche sa prédiction, sinon il se verrait réagir avec un aller-retour de retard.
+   */
+  moiAffiche() {
+    const me = this.view?.me;
+    if (!me) return null;
+    if (this.isHost || !this.pred.pos) return me;
+    const p = this.pred.vue ?? this.pred.pos;
+    return { ...me, x: p.x, y: p.y };
   }
 
   act(a) {
@@ -290,7 +318,7 @@ class AmongUI {
 
     this.lastSig = sig;
     this.lastSent = now;
-    this.act({ a: 'input', dx, dy });
+    this.act({ a: 'input', dx, dy, ts: Date.now() });
   }
 
   killNearby() {
@@ -835,9 +863,18 @@ class AmongUI {
     this.raf = requestAnimationFrame(() => this.frame());
     const t = performance.now();
     if (t - (this.lastFrame ?? 0) < RENDER_MIN_MS) return;   // ~40 images/s : la batterie des invités
+    const dtMs = t - (this.lastFrame ?? t);
     this.lastFrame = t;
     const v = this.view;
     if (!v || !v.me) return;
+
+    // Prédiction locale (invités seulement). Les murs incluent les portes verrouillées.
+    if (!this.isHost && this.pred.pos && v.phase === 'jeu' && !v.me.vented) {
+      const fermees = new Set();
+      for (const d of v.doorsClosed ?? []) for (const c of d.tiles) fermees.add(`${c.x},${c.y}`);
+      const mur = (x, y) => v.grid[y]?.[x] !== '0' || fermees.has(`${x},${y}`);
+      this.pred.avancer(dtMs, this.modal ? { dx: 0, dy: 0 } : this.axis(), v.me.speed ?? 0, mur, !v.me.alive);
+    }
     if (v.phase === 'reunion') { this.renderMeeting(); return; }
     if (!this.canvas || v.phase !== 'jeu') return;
 
@@ -850,7 +887,7 @@ class AmongUI {
     }
     const g = this.canvas.getContext('2d');
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const me = v.me;
+    const me = this.moiAffiche();
 
     // Caméra centrée sur le joueur.
     const tile = Math.max(20, Math.min(rect.width / 26, rect.height / 16));

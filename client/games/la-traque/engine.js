@@ -31,7 +31,28 @@ const SPEED_HIDER = 3.3;
 const SNEAK_FACTOR = 0.5;         // marche furtive : silencieuse mais lente
 const SPRINT_FACTOR = 1.5;
 const SPEED_BONUS_FACTOR = 1.35;
-const BODY_R = 0.3;               // rayon de collision
+export const BODY_R = 0.3;        // rayon de collision
+
+/**
+ * UN SEUL pas de déplacement, partagé par le moteur (Host) et la prédiction locale
+ * (invités). Une copie du code côté client finirait par diverger : ici, il n'y a
+ * pas de copie.
+ * @param {{x:number,y:number}} pos modifié sur place
+ * @param {(x:number,y:number)=>boolean} isWall
+ */
+export function stepCollision(pos, dx, dy, isWall) {
+  const libre = (nx, ny) => [
+    [Math.floor(nx - BODY_R), Math.floor(ny - BODY_R)],
+    [Math.floor(nx + BODY_R), Math.floor(ny - BODY_R)],
+    [Math.floor(nx - BODY_R), Math.floor(ny + BODY_R)],
+    [Math.floor(nx + BODY_R), Math.floor(ny + BODY_R)],
+  ].every(([cx, cy]) => !isWall(cx, cy));
+  if (libre(pos.x + dx, pos.y)) pos.x += dx;   // on glisse le long des murs
+  if (libre(pos.x, pos.y + dy)) pos.y += dy;
+  pos.x = Math.round(pos.x * 100) / 100;
+  pos.y = Math.round(pos.y * 100) / 100;
+  return pos;
+}
 const STAMINA_MAX = 100;
 const STAMINA_DRAIN = 28;         // par seconde de sprint
 const STAMINA_REGEN = 15;
@@ -358,6 +379,11 @@ export class TraqueEngine {
     const dx = clamp(Number(input.dx) || 0, -1, 1);
     const dy = clamp(Number(input.dy) || 0, -1, 1);
     const len = Math.hypot(dx, dy);
+    // Horodatage croisé : `ts` est l'horloge de l'invité au moment où il a appuyé,
+    // `inputAt` celle du Host au moment où il l'a reçue. Leur écart minimal donne
+    // à l'invité la correspondance exacte entre les deux horloges ET le retard
+    // réseau — sans quoi il se recalerait sur une position du mauvais instant.
+    if (Number.isFinite(input.ts)) { p.inputTs = Number(input.ts); p.inputAt = this.now(); }
     p.input = {
       dx: len > 1 ? dx / len : dx,
       dy: len > 1 ? dy / len : dy,
@@ -421,6 +447,22 @@ export class TraqueEngine {
     return undefined;
   }
 
+  /**
+   * Vitesse effective, à cet instant : rôle, furtivité, sprint, bonus, gel pendant
+   * la cachette. Transmise dans la vue pour que l'invité prédise SANS deviner.
+   */
+  speedOf(p, hidePhase = this.phase === 'cachette') {
+    if (!p.alive) return 0;
+    if (hidePhase && p.role === 'chercheur') return 0;   // le Chercheur est figé
+    const inp = p.input;
+    const canSprint = inp.sprint && !inp.sneak && p.stamina > 1;
+    let speed = (p.role === 'chercheur' ? SPEED_SEEKER : SPEED_HIDER);
+    if (inp.sneak) speed *= SNEAK_FACTOR;
+    else if (canSprint) speed *= SPRINT_FACTOR;
+    if (p.effects.vitesse) speed *= SPEED_BONUS_FACTOR;
+    return speed;
+  }
+
   movePlayers(dt, hidePhase) {
     const t = this.now();
     for (const p of this.players) {
@@ -435,10 +477,7 @@ export class TraqueEngine {
       p.moving = moving;
 
       const canSprint = inp.sprint && !inp.sneak && p.stamina > 1;
-      let speed = (p.role === 'chercheur' ? SPEED_SEEKER : SPEED_HIDER);
-      if (inp.sneak) speed *= SNEAK_FACTOR;
-      else if (canSprint) speed *= SPRINT_FACTOR;
-      if (p.effects.vitesse) speed *= SPEED_BONUS_FACTOR;
+      const speed = this.speedOf(p, hidePhase);
 
       if (canSprint && moving) p.stamina = Math.max(0, p.stamina - STAMINA_DRAIN * dt);
       else p.stamina = Math.min(STAMINA_MAX, p.stamina + STAMINA_REGEN * dt);
@@ -454,23 +493,9 @@ export class TraqueEngine {
     }
   }
 
-  /** Collision cercle/grille, axe par axe (on glisse le long des murs). */
+  /** Collision cercle/grille — exactement le code que l'invité exécute en local. */
   moveWithCollision(p, dx, dy) {
-    const tryAxis = (nx, ny) => {
-      const cells = [
-        [Math.floor(nx - BODY_R), Math.floor(ny - BODY_R)],
-        [Math.floor(nx + BODY_R), Math.floor(ny - BODY_R)],
-        [Math.floor(nx - BODY_R), Math.floor(ny + BODY_R)],
-        [Math.floor(nx + BODY_R), Math.floor(ny + BODY_R)],
-      ];
-      return cells.every(([cx, cy]) => !this.isWall(cx, cy));
-    };
-    if (tryAxis(p.x + dx, p.y)) p.x += dx;
-    if (tryAxis(p.x, p.y + dy)) p.y += dy;
-    // Au centième de case : « 12.345678901234 » dans chaque vue, dix fois par
-    // seconde et par joueur, c'est du poids réseau pour une précision invisible.
-    p.x = Math.round(p.x * 100) / 100;
-    p.y = Math.round(p.y * 100) / 100;
+    stepCollision(p, dx, dy, (x, y) => this.isWall(x, y));
   }
 
   /** Bruit de pas : c'est ce que le Chercheur « entend ». Furtif = silencieux. */
@@ -728,10 +753,15 @@ export class TraqueEngine {
       roster: aDejaLeRoster ? undefined : this.players.map((p) => ({
         id: p.id, pseudo: p.pseudo, skin: p.skin, role: p.role, alive: p.alive, score: p.score,
       })),
+      // `t` et `speed` servent à la PRÉDICTION LOCALE de l'invité : il doit savoir
+      // à quel instant cette position a été calculée, et à quelle vitesse il avance.
+      t: this.now(),
       me: me ? {
         id: me.id, pseudo: me.pseudo, skin: me.skin, role: me.role, alive: me.alive,
         x: me.x, y: me.y, angle: me.angle, stamina: me.stamina, bullets: me.bullets,
         effects: { ...me.effects }, lastBonus: me.lastBonus ?? null,
+        speed: this.speedOf(me),
+        inputTs: me.inputTs ?? null, inputAt: me.inputAt ?? null,
       } : null,
       seekerName: this.seeker?.pseudo ?? null,
       // Différentiel : uniquement les messages que le destinataire n'a pas encore.

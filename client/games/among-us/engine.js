@@ -104,7 +104,28 @@ export const TASK_DEFS = Object.freeze([
 /* ====================== RÉGLAGES ====================== */
 
 export const TICK_MS = 50;
-const BODY_R = 0.32;
+export const BODY_R = 0.32;
+
+/**
+ * UN SEUL pas de déplacement, partagé par le moteur (Host) et la prédiction locale
+ * (invités). Pas de copie côté client : pas de divergence possible.
+ */
+export function stepCollision(pos, dx, dy, isWall, traverseLesMurs = false) {
+  if (traverseLesMurs) {   // les fantômes
+    pos.x = Math.round((pos.x + dx) * 100) / 100;
+    pos.y = Math.round((pos.y + dy) * 100) / 100;
+    return pos;
+  }
+  const libre = (nx, ny) => [
+    [nx - BODY_R, ny - BODY_R], [nx + BODY_R, ny - BODY_R],
+    [nx - BODY_R, ny + BODY_R], [nx + BODY_R, ny + BODY_R],
+  ].every(([cx, cy]) => !isWall(Math.floor(cx), Math.floor(cy)));
+  if (libre(pos.x + dx, pos.y)) pos.x += dx;
+  if (libre(pos.x, pos.y + dy)) pos.y += dy;
+  pos.x = Math.round(pos.x * 100) / 100;
+  pos.y = Math.round(pos.y * 100) / 100;
+  return pos;
+}
 const BASE_SPEED = 4.2;              // cases/seconde (×0,5 à ×3)
 const KILL_DIST = { courte: 1.0, normale: 1.6, longue: 2.2 };
 const REPORT_RADIUS = 1.6;
@@ -388,28 +409,26 @@ export class AmongEngine {
     const dx = clamp(Number(input.dx) || 0, -1, 1);
     const dy = clamp(Number(input.dy) || 0, -1, 1);
     const len = Math.hypot(dx, dy);
+    // Horodatage croisé (voir La Traque) : permet à l'invité de savoir de quel
+    // instant date la position que le Host lui renvoie.
+    if (Number.isFinite(input.ts)) { p.inputTs = Number(input.ts); p.inputAt = this.now(); }
     p.input = { dx: len > 1 ? dx / len : dx, dy: len > 1 ? dy / len : dy };
     return { ok: true };
   }
 
+  /** Vitesse effective — transmise dans la vue pour que l'invité prédise sans deviner. */
+  speedOf(p) {
+    if (this.phase !== 'jeu' || p.vented) return 0;   // réunion, conduit : on ne bouge pas
+    return BASE_SPEED * this.options.vitesse;
+  }
+
   move(p, dt) {
-    const speed = BASE_SPEED * this.options.vitesse;
+    const speed = this.speedOf(p);
+    if (speed === 0) return;
     const dx = p.input.dx * speed * dt;
     const dy = p.input.dy * speed * dt;
-    if (!p.alive) {
-      // Les fantômes traversent les murs — mais restent sur la carte.
-      p.x = Math.round(clamp(p.x + dx, 0.5, COLS - 0.5) * 100) / 100;
-      p.y = Math.round(clamp(p.y + dy, 0.5, ROWS - 0.5) * 100) / 100;
-      return;
-    }
-    const free = (nx, ny) => [
-      [nx - BODY_R, ny - BODY_R], [nx + BODY_R, ny - BODY_R],
-      [nx - BODY_R, ny + BODY_R], [nx + BODY_R, ny + BODY_R],
-    ].every(([cx, cy]) => !this.isWall(Math.floor(cx), Math.floor(cy)));
-    if (free(p.x + dx, p.y)) p.x += dx;
-    if (free(p.x, p.y + dy)) p.y += dy;
-    // Au centième de case : « 12.345678901234 » dans chaque vue, dix fois par
-    // seconde et par joueur, c'est du poids réseau pour une précision invisible.
+    // Les fantômes traversent les murs — mais restent sur la carte.
+    stepCollision(p, dx, dy, (x, y) => this.isWall(x, y), !p.alive);
     p.x = Math.round(clamp(p.x, 0.5, COLS - 0.5) * 100) / 100;
     p.y = Math.round(clamp(p.y, 0.5, ROWS - 0.5) * 100) / 100;
   }
@@ -889,6 +908,7 @@ export class AmongEngine {
       sabotage: this.sabotage
         ? { type: this.sabotage.type, reste: this.sabotage.until ? Math.max(0, this.sabotage.until - now) : null, fixes: this.sabotage.fixes }
         : null,
+      t: this.now(),   // instant du calcul : la prédiction locale s'y recale
       chatSeq: this.chatSeq,
       logSeq: this.logSeq,
       log: this.log.filter((l) => l.seq > depuisLog),
@@ -995,6 +1015,8 @@ export class AmongEngine {
 
   selfOf(p, sansTaches = false) {
     const now = this.now();
+    // `speed` sert à la prédiction locale de l'invité (0 = immobilisé : réunion, conduit).
+    const speed = this.speedOf(p);
     return {
       id: p.id, pseudo: p.pseudo, couleur: p.couleur, role: p.role, alive: p.alive,
       x: p.x, y: p.y, vented: p.vented,
@@ -1003,6 +1025,8 @@ export class AmongEngine {
       killReste: p.role === 'impostor' ? Math.max(0, p.killCooldownEnd - now) : null,
       sabotageReste: p.role === 'impostor' ? Math.max(0, this.sabotageCooldownEnd - now) : null,
       step: p.step,
+      speed,
+      inputTs: p.inputTs ?? null, inputAt: p.inputAt ?? null,
       // La liste ne bouge qu'aux validations : inutile de la renvoyer 10 fois/s.
       tasks: sansTaches ? undefined : p.tasks.map((t) => {
         const def = this.taskDef(t.id);

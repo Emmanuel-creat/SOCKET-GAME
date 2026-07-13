@@ -9,7 +9,8 @@
  * lancer de rayons, flashs, bruits. Les murs sont dessinés en très sombre —
  * le labyrinthe n'est pas un secret, les POSITIONS le sont.
  */
-import { TraqueEngine, SKINS, COLS, ROWS, TICK_MS, HIDE_CHOICES, ROUND_CHOICES } from './engine.js';
+import { TraqueEngine, SKINS, COLS, ROWS, TICK_MS, HIDE_CHOICES, ROUND_CHOICES, stepCollision } from './engine.js';
+import { Predictor } from '../shared/predictor.js';
 
 /**
  * Budget serveur. Sur Render Free (0,1 CPU), le coût du serveur suit le NOMBRE de
@@ -115,6 +116,9 @@ class TraqueUI {
     this.syncMap = new Map();                          // Host : ce que chaque joueur possède
     this.mazeLayer = null;                             // labyrinthe pré-dessiné (il ne bouge pas)
     this.sideSig = null;                               // signature des panneaux latéraux
+    // Prédiction locale : l'invité avance tout de suite, sans attendre le Host.
+    // Même fonction de déplacement que le moteur — importée, pas recopiée.
+    this.pred = new Predictor(stepCollision);
   }
 
   get isHost() { return this.ctx.me.id === this.ctx.hostId; }
@@ -217,8 +221,34 @@ class TraqueUI {
     this.prev = this.view;
     this.view = complete;
     this.viewAt = performance.now();
-    if (complete.phase !== this.lastPhase) { this.lastPhase = complete.phase; this.build(); }
+
+    // --- prédiction locale : on se recale sur la vérité du Host ---
+    const moi = complete.me;
+    if (moi && !this.isHost) {
+      const active = complete.phase === 'traque' || complete.phase === 'cachette';
+      if (!active || !moi.alive) this.pred.reset(moi.x, moi.y);
+      else this.pred.reconcilier(complete.t, moi, (x, y) => complete.grid?.[y]?.[x] === '1');
+    }
+
+    if (complete.phase !== this.lastPhase) {
+      this.lastPhase = complete.phase;
+      if (complete.me) this.pred.reset(complete.me.x, complete.me.y);
+      this.build();
+    }
     this.syncHud();
+  }
+
+  /**
+   * Ma position À L'ÉCRAN. Le Host, lui, EST la vérité : il s'affiche tel quel.
+   * L'invité affiche sa prédiction — sinon il verrait son propre personnage
+   * réagir avec un aller-retour réseau de retard.
+   */
+  moiAffiche() {
+    const me = this.view?.me;
+    if (!me) return null;
+    if (this.isHost || !this.pred.pos) return me;
+    const p = this.pred.vue ?? this.pred.pos;
+    return { ...me, x: p.x, y: p.y, angle: this.aim ?? me.angle };
   }
 
   act(action) {
@@ -284,7 +314,7 @@ class TraqueUI {
 
     this.lastSig = sig;
     this.lastSent = now;
-    this.act({ a: 'input', dx, dy, aim: Math.round(this.aim * 100) / 100, sneak, sprint });
+    this.act({ a: 'input', dx, dy, aim: Math.round(this.aim * 100) / 100, sneak, sprint, ts: Date.now() });
   }
 
   /* ------------------------- construction du DOM ------------------------- */
@@ -432,7 +462,8 @@ class TraqueUI {
       const { tile, ox, oy } = this.geom(r);
       const wx = (e.clientX - r.left - ox) / tile;
       const wy = (e.clientY - r.top - oy) / tile;
-      this.aim = Math.atan2(wy - v.me.y, wx - v.me.x);
+      const moi = this.moiAffiche() ?? v.me;
+      this.aim = Math.atan2(wy - moi.y, wx - moi.x);
       this.sendInput();
     };
     this.canvas.addEventListener('pointermove', aimAt);
@@ -556,7 +587,15 @@ class TraqueUI {
     // pour des images que personne ne distingue.
     const t = performance.now();
     if (t - (this.lastFrame ?? 0) < RENDER_MIN_MS) return;
+    const dtMs = t - (this.lastFrame ?? t);
     this.lastFrame = t;
+
+    // Prédiction locale (invités seulement — le Host est déjà la vérité).
+    const vv = this.view;
+    if (!this.isHost && vv?.me && this.pred.pos && (vv.phase === 'traque' || vv.phase === 'cachette')) {
+      const inp = this.axis();
+      this.pred.avancer(dtMs, inp, vv.me.speed ?? 0, (x, y) => vv.grid[y]?.[x] === '1');
+    }
     const v = this.view;
     if (!this.canvas || !v || !v.grid || !v.me) return;
 
@@ -593,7 +632,8 @@ class TraqueUI {
     };
 
     // Halo du joueur (sa propre bulle de perception).
-    const me = v.me;
+    // Ma position PRÉDITE : sinon je me verrais réagir avec un aller-retour de retard.
+    const me = this.moiAffiche();
     if (me.alive) {
       const r = (me.role === 'chercheur' ? 1.3 : 1.6) * tile;
       const grd = g.createRadialGradient(X(me.x), Y(me.y), 0, X(me.x), Y(me.y), r);
