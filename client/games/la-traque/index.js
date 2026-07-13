@@ -97,6 +97,10 @@ class TraqueUI {
     this.loop = null;
     this.unsub = null;
     this.skin = null;
+    this.state = { chat: [], deadChat: [], log: [] };  // ce que ce client possède déjà
+    this.syncMap = new Map();                          // Host : ce que chaque joueur possède
+    this.mazeLayer = null;                             // labyrinthe pré-dessiné (il ne bouge pas)
+    this.sideSig = null;                               // signature des panneaux latéraux
   }
 
   get isHost() { return this.ctx.me.id === this.ctx.hostId; }
@@ -151,20 +155,51 @@ class TraqueUI {
     }
   }
 
+  /**
+   * Diffusion différentielle : chaque joueur ne reçoit que ce qu'il n'a pas déjà.
+   * Le labyrinthe part une fois par manche, le roster quand il change, le chat et
+   * le journal message par message. Avant : ~580 Ko/s pour huit joueurs.
+   */
   broadcast() {
-    for (const p of this.engine.players) {
+    const e = this.engine;
+    const etat = () => ({
+      grid: e.mapVersion, rosterVersion: e.rosterVersion, chatSeq: e.chatSeq, logSeq: e.logSeq,
+    });
+    for (const p of e.players) {
       if (p.id === this.me.id) continue;
-      this.ctx.sendMessage({ t: 'view', view: this.engine.getViewFor(p.id) }, p.id);
+      let sync = this.syncMap.get(p.id) ?? null;
+      // Un joueur qui vient d'être éliminé doit recevoir l'historique du canal
+      // des morts : on lui renvoie le chat une fois, puis on repasse en différentiel.
+      if (sync && !p.alive && !sync.deadReset) sync = { ...sync, chatSeq: 0, deadReset: true };
+      this.ctx.sendMessage({ t: 'view', view: e.getViewFor(p.id, sync) }, p.id);
+      this.syncMap.set(p.id, { ...etat(), deadReset: sync?.deadReset || !p.alive });
     }
-    this.receive(this.engine.getViewFor(this.me.id));
+    const moi = this.syncMap.get(this.me.id) ?? null;
+    this.receive(e.getViewFor(this.me.id, moi));
+    this.syncMap.set(this.me.id, { ...etat(), deadReset: moi?.deadReset || !e.playerOf(this.me.id).alive });
   }
 
+  /** Le client réassemble la vue complète à partir de ce qu'il gardait. */
   receive(view) {
+    const s = this.state;
+    if (view.grid) {
+      s.grid = view.grid; s.cols = view.cols; s.rows = view.rows; s.mapVersion = view.mapVersion;
+      this.mazeLayer = null;   // nouveau labyrinthe : on le re-dessinera une fois
+    }
+    if (view.roster) s.roster = view.roster;
+    if (view.chat?.length) s.chat = [...s.chat, ...view.chat].slice(-60);
+    if (view.deadChat?.length) s.deadChat = [...s.deadChat, ...view.deadChat].slice(-60);
+    if (view.log?.length) s.log = [...s.log, ...view.log].slice(-25);
+
+    const complete = {
+      ...view,
+      grid: s.grid, cols: s.cols, rows: s.rows, mapVersion: s.mapVersion,
+      roster: s.roster ?? [], chat: s.chat, deadChat: s.deadChat, log: s.log,
+    };
     this.prev = this.view;
-    this.view = view;
+    this.view = complete;
     this.viewAt = performance.now();
-    const phase = view.phase;
-    if (phase !== this.lastPhase) { this.lastPhase = phase; this.build(); }
+    if (complete.phase !== this.lastPhase) { this.lastPhase = complete.phase; this.build(); }
     this.syncHud();
   }
 
@@ -435,6 +470,12 @@ class TraqueUI {
   syncSide() {
     const v = this.view;
     if (!v || !this.rosterEl) return;
+    // Reconstruire roster + journal + chat dix fois par seconde alors que rien n'a
+    // bougé, c'était l'essentiel du travail inutile chez les invités.
+    const sig = `${v.rosterVersion}|${v.log.at(-1)?.seq ?? 0}|${v.chat.at(-1)?.seq ?? 0}|${v.deadChat.at(-1)?.seq ?? 0}|${v.ghost ? 1 : 0}`;
+    if (sig === this.sideSig) return;
+    this.sideSig = sig;
+
     this.rosterEl.replaceChildren(...v.roster.map((p) => {
       const s = skinOf(p.skin);
       return h('div', { className: p.alive ? '' : 'out' }, [
@@ -443,7 +484,7 @@ class TraqueUI {
         h('span', { style: 'color:var(--text-dim,#aab)' }, `${p.role === 'chercheur' ? ' 🔦' : ''} — ${p.score} pts`),
       ]);
     }));
-    this.logEl.replaceChildren(...[...(v.log ?? [])].reverse().map((l) => h('div', {}, l)));
+    this.logEl.replaceChildren(...[...(v.log ?? [])].reverse().map((l) => h('div', {}, l.text)));
 
     const msgs = v.ghost ? [...(v.chat ?? []), ...(v.deadChat ?? []).map((m) => ({ ...m, dead: true }))] : (v.chat ?? []);
     msgs.sort((a, b) => a.ts - b.ts);
@@ -460,6 +501,25 @@ class TraqueUI {
     return { tile, ox: (rect.width - tile * COLS) / 2, oy: (rect.height - tile * ROWS) / 2 };
   }
 
+  /** Le labyrinthe, peint une seule fois hors écran (re-fait si la taille change). */
+  mazeImage(v, tile) {
+    const cle = `${v.mapVersion}|${Math.round(tile * 4)}`;
+    if (this.mazeLayer && this.mazeKey === cle) return this.mazeLayer;
+    const c = document.createElement('canvas');
+    c.width = Math.ceil(COLS * tile);
+    c.height = Math.ceil(ROWS * tile);
+    const g = c.getContext('2d');
+    g.fillStyle = 'rgba(120,140,200,.10)';
+    for (let y = 0; y < ROWS; y += 1) {
+      for (let x = 0; x < COLS; x += 1) {
+        if (v.grid[y][x] === '1') g.fillRect(x * tile, y * tile, tile + 0.5, tile + 0.5);
+      }
+    }
+    this.mazeLayer = c;
+    this.mazeKey = cle;
+    return c;
+  }
+
   frame() {
     this.raf = requestAnimationFrame(() => this.frame());
     const v = this.view;
@@ -467,7 +527,7 @@ class TraqueUI {
 
     const rect = this.canvas.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5); // plafond : le DPR 3 des mobiles triple le coût pour rien
     if (this.canvas.width !== Math.round(rect.width * dpr)) {
       this.canvas.width = Math.round(rect.width * dpr);
       this.canvas.height = Math.round(rect.height * dpr);
@@ -484,12 +544,9 @@ class TraqueUI {
 
     // Murs : dessinés très sombres. Le labyrinthe n'est pas un secret — les
     // positions le sont — et sans repères on ne peut pas jouer.
-    g.fillStyle = 'rgba(120,140,200,.10)';
-    for (let y = 0; y < ROWS; y += 1) {
-      for (let x = 0; x < COLS; x += 1) {
-        if (v.grid[y][x] === '1') g.fillRect(X(x), Y(y), tile + 0.5, tile + 0.5);
-      }
-    }
+    // Il ne bouge jamais : on le peint UNE fois hors écran, puis on le recopie.
+    // (651 rectangles à chaque image, soixante fois par seconde, pour un décor fixe.)
+    g.drawImage(this.mazeImage(v, tile), ox, oy);
 
     const lerp = (a, b) => {
       const k = Math.min(1, (performance.now() - this.viewAt) / LERP_MS);
@@ -572,12 +629,14 @@ class TraqueUI {
   drawCone(g, v, c, X, Y, tile) {
     const range = c.boost ? v.cone.rangeBonus : v.cone.range;
     const half = ((c.boost ? v.cone.halfBonus : v.cone.half) * Math.PI) / 180;
-    const RAYS = 54;
+    // 36 rayons suffisent visuellement ; 54 rayons × un pas de 0,12 case, c'était
+    // ~3 400 sondages par cône et par image — pour un contour qu'on ne distingue pas.
+    const RAYS = 36;
     const pts = [];
     for (let i = 0; i <= RAYS; i += 1) {
       const a = c.angle - half + (2 * half * i) / RAYS;
       let d = 0;
-      const step = 0.12;
+      const step = 0.2;
       while (d < range) {
         const nx = c.x + Math.cos(a) * (d + step);
         const ny = c.y + Math.sin(a) * (d + step);

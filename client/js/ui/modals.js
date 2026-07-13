@@ -3,6 +3,7 @@
  * Dépendances injectées : { socket } (SocketClient) pour agir sur le serveur.
  */
 import { Modal } from './Modal.js';
+import { openDevPanel } from './devPanel.js';
 import { el } from './dom.js';
 import { store } from '../core/Store.js';
 import { bus } from '../core/EventBus.js';
@@ -84,6 +85,18 @@ export function openSettingsModal({ socket }) {
       el('div', { className: 'field' }, [el('label', { htmlFor: 'settings-status' }, ['Mon statut']), statusSelect]),
       el('p', { style: { color: 'var(--text-dim)', fontSize: '0.85rem' } },
         ['Les statuts « Dans un salon » et « En jeu » sont gérés automatiquement par la plateforme.']),
+
+      // --- Espace programmeur (accès restreint) ---
+      el('hr', { style: { border: 'none', borderTop: '1px solid var(--glass-border, rgba(255,255,255,.1))', margin: '14px 0 10px' } }),
+      el('div', { className: 'field' }, [
+        el('label', {}, ['Espace programmeur']),
+        el('button', {
+          className: 'btn btn--ghost',
+          onClick: () => { modal.close(); openDevPanel({ socket }); },
+        }, ['🛠️ Accès restreint — supervision du serveur']),
+        el('p', { style: { color: 'var(--text-dim)', fontSize: '0.8rem', marginTop: '6px' } },
+          ['Code requis. Il est vérifié par le serveur, pas ici : cinq essais par adresse IP, puis blocage.']),
+      ]),
     ],
     actions: [
       el('button', { className: 'btn btn--ghost', onClick: () => modal.close() }, ['Annuler']),

@@ -51,6 +51,13 @@ const RISQUE_PETITE_FILLE = 0.25; // par nuit espionnée : les loups apprennent 
 /* Moteur (pur : aucune dépendance DOM/réseau)                            */
 /* ====================================================================== */
 
+/**
+ * Les morts sont des SPECTATEURS MUETS, pas des omniscients : ils ne découvrent
+ * que les rôles des joueurs déjà morts, comme tout le monde. Passer ce drapeau à
+ * true rétablit l'ancien comportement (les morts voient tout).
+ */
+const MORTS_VOIENT_TOUT = false;
+
 export class LoupGarouEngine {
   /** @param {{id, pseudo}[]} players @param {{hostId, rng?}} options */
   constructor(players, { hostId, rng = Math.random } = {}) {
@@ -136,7 +143,12 @@ export class LoupGarouEngine {
       case 'village': return true; // lisible par tous (les morts regardent)
       case 'morts': return dead || this.phase === 'fin';
       case 'amoureux': return this.lovers.includes(pid);
-      case 'loups': return this.roles[pid] === 'loup' || (this.roles[pid] === 'petiteFille' && this.isAlive(pid)) || dead;
+      // Ouvrir ce canal aux morts reviendrait à leur nommer les loups : c'est la
+      // même fuite que les rôles, par un autre chemin. Un loup mort, lui, connaît
+      // déjà sa meute — il garde donc son accès.
+      case 'loups': return this.roles[pid] === 'loup'
+        || (this.roles[pid] === 'petiteFille' && this.isAlive(pid))
+        || (dead && MORTS_VOIENT_TOUT);
       default: return false;
     }
   }
@@ -600,8 +612,10 @@ export class LoupGarouEngine {
         pseudo: p.pseudo,
         alive: this.phase === 'setup' ? true : this.isAlive(p.id),
         captain: this.captainId === p.id,
-        role: (this.phase !== 'setup' && !this.isAlive(p.id)) || finished || dead
-          ? `${this.roleOf(p.id).icone} ${this.roleOf(p.id).nom}` : null, // rôles révélés : morts pour tous, tous pour les morts/fin
+        // Un rôle n'est révélé que si le joueur est MORT (pour tout le monde),
+        // ou en fin de partie. Être mort soi-même ne donne aucun privilège.
+        role: (this.phase !== 'setup' && !this.isAlive(p.id)) || finished || (dead && MORTS_VOIENT_TOUT)
+          ? `${this.roleOf(p.id).icone} ${this.roleOf(p.id).nom}` : null,
       })),
       chats: Object.fromEntries(channels.map((c) => [c,
         this.chats[c].slice(-60).map((m) => (c === 'loups' && maskWolves && !m.sys

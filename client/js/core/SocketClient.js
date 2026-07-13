@@ -61,6 +61,13 @@ export class SocketClient {
     // Données de jeu relayées pendant une partie (le module de jeu s'y abonne).
     s.on(EVENTS.GAME_MESSAGE, ({ from, data }) => bus.emit('game:message', { from, data }));
 
+    // Mesure de latence : on renvoie l'horodatage tel quel, le serveur fait le calcul.
+    s.on(EVENTS.SYS_PING, ({ t }) => s.emit(EVENTS.SYS_PONG, { t }));
+
+    // Supervision (page programmeur).
+    s.on(EVENTS.ADMIN_AUTHED, (res) => bus.emit('admin:authed', res));
+    s.on(EVENTS.ADMIN_STATS, (stats) => bus.emit('admin:stats', stats));
+
     s.on(EVENTS.SYS_NOTIFICATION, ({ type, message }) => bus.emit('notify', { type, message }));
     s.on(EVENTS.SYS_ERROR, ({ message }) => bus.emit('notify', { type: 'error', message }));
 
@@ -68,6 +75,9 @@ export class SocketClient {
   }
 
   // --- API sortante (une méthode par intention utilisateur) ---
+
+  adminAuth(code) { this.socket.emit(EVENTS.ADMIN_AUTH, { code }); }
+  adminLeave() { this.socket.emit(EVENTS.ADMIN_LEAVE); }
 
   register(profile) { this.socket.emit(EVENTS.USER_REGISTER, profile); }
   updateProfile(profile) { this.socket.emit(EVENTS.USER_UPDATE_PROFILE, profile); }

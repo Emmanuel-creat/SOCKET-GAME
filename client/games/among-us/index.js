@@ -105,6 +105,10 @@ class AmongUI {
     this.lastSent = 0;
     this.ticks = 0;
     this.modal = null;   // mini-jeu ou panneau ouvert
+    this.state = { chat: [], deadChat: [], log: [] };  // ce que ce client possède déjà
+    this.syncMap = new Map();                          // Host : ce que chaque joueur possède
+    this.mapLayer = null;                              // carte pré-dessinée (elle ne bouge pas)
+    this.sideSig = null;
   }
 
   get isHost() { return this.ctx.me.id === this.ctx.hostId; }
@@ -166,19 +170,51 @@ class AmongUI {
     }
   }
 
+  /** Diffusion différentielle : chacun ne reçoit que ce qu'il n'a pas déjà. */
   broadcast() {
-    for (const p of this.engine.players) {
-      if (p.id === this.me.id) continue;
-      this.ctx.sendMessage({ t: 'view', view: this.engine.getViewFor(p.id) }, p.id);
+    const e = this.engine;
+    for (const p of e.players) {
+      const sync0 = this.syncMap.get(p.id) ?? null;
+      // Un joueur qui vient de mourir doit recevoir l'historique du chat des morts.
+      const sync = (sync0 && !p.alive && !sync0.deadReset) ? { ...sync0, chatSeq: 0, deadReset: true } : sync0;
+      const view = e.getViewFor(p.id, sync);
+      this.syncMap.set(p.id, {
+        map: e.mapVersion,
+        rosterVersion: e.rosterVersion,
+        tasksVersion: p.tasksVersion,
+        chatSeq: e.chatSeq,
+        logSeq: e.logSeq,
+        deadReset: sync?.deadReset || !p.alive,
+      });
+      if (p.id === this.me.id) this.receive(view);
+      else this.ctx.sendMessage({ t: 'view', view }, p.id);
     }
-    this.receive(this.engine.getViewFor(this.me.id));
   }
 
+  /** Le client réassemble la vue complète à partir de ce qu'il gardait. */
   receive(view) {
+    const s = this.state;
+    if (view.grid) {
+      s.grid = view.grid; s.cols = view.cols; s.rows = view.rows;
+      s.rooms = view.rooms; s.stations = view.stations; s.mapVersion = view.mapVersion;
+      this.mapLayer = null;
+    }
+    if (view.roster) s.roster = view.roster;
+    if (view.me?.tasks) s.tasks = view.me.tasks;
+    if (view.chat?.length) s.chat = [...s.chat, ...view.chat].slice(-60);
+    if (view.deadChat?.length) s.deadChat = [...s.deadChat, ...view.deadChat].slice(-60);
+    if (view.log?.length) s.log = [...s.log, ...view.log].slice(-20);
+
+    const complete = {
+      ...view,
+      grid: s.grid, cols: s.cols, rows: s.rows, rooms: s.rooms, stations: s.stations, mapVersion: s.mapVersion,
+      roster: s.roster ?? [], chat: s.chat, deadChat: s.deadChat, log: s.log,
+      me: view.me ? { ...view.me, tasks: view.me.tasks ?? s.tasks ?? [] } : null,
+    };
     this.prev = this.view;
-    this.view = view;
+    this.view = complete;
     this.viewAt = performance.now();
-    const key = `${view.phase}|${view.meeting?.etape ?? ''}`;
+    const key = `${complete.phase}|${complete.meeting?.etape ?? ''}`;
     if (key !== this.lastKey) {
       this.lastKey = key;
       if (this.modal?.timer) clearInterval(this.modal.timer);
@@ -435,7 +471,11 @@ class AmongUI {
       this.hudEl.replaceChildren(...bits.filter(Boolean));
     }
 
-    if (this.tasksEl) {
+    const sideSig = `${v.rosterVersion}|${me.tasksVersion ?? 0}|${v.log.at(-1)?.seq ?? 0}|${v.chat.at(-1)?.seq ?? 0}|${v.deadChat.at(-1)?.seq ?? 0}|${v.commsHS ? 1 : 0}`;
+    const majSide = sideSig !== this.sideSig;
+    if (majSide) this.sideSig = sideSig;
+
+    if (this.tasksEl && majSide) {
       const items = me.tasks.map((t) => h('div', { className: t.fait ? 'ok' : '' }, [
         `${t.fait ? '✅' : '▫️'} ${t.nom}`,
         !t.fait && !v.commsHS
@@ -447,7 +487,7 @@ class AmongUI {
       this.tasksEl.replaceChildren(...items);
     }
 
-    if (this.rosterEl) {
+    if (this.rosterEl && majSide) {
       this.rosterEl.replaceChildren(...v.roster.map((p) => {
         const vu = v.visibles?.find((q) => q.id === p.id);
         const imp = (p.id === me.id ? me.role : vu?.role) === 'impostor';
@@ -460,9 +500,9 @@ class AmongUI {
       }));
     }
 
-    if (this.logEl) this.logEl.replaceChildren(...[...(v.log ?? [])].reverse().map((l) => h('div', {}, l)));
+    if (this.logEl && majSide) this.logEl.replaceChildren(...[...(v.log ?? [])].reverse().map((l) => h('div', {}, l.text)));
 
-    if (this.chatLog) {
+    if (this.chatLog && majSide) {
       const msgs = [...(v.chat ?? []), ...(v.deadChat ?? []).map((m) => ({ ...m, dead: true }))].sort((a, b) => a.ts - b.ts);
       this.chatLog.replaceChildren(...msgs.map((m) => h('div', { className: m.dead ? 'dead' : '' }, [
         h('span', { className: 'au__dot', style: `background:${m.couleur}` }),
@@ -771,7 +811,7 @@ class AmongUI {
 
     const rect = this.canvas.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5); // plafond : le DPR 3 des mobiles triple le coût
     if (this.canvas.width !== Math.round(rect.width * dpr)) {
       this.canvas.width = Math.round(rect.width * dpr);
       this.canvas.height = Math.round(rect.height * dpr);
@@ -788,23 +828,9 @@ class AmongUI {
     g.fillStyle = '#04060c';
     g.fillRect(0, 0, rect.width, rect.height);
 
-    for (let y = 0; y < v.rows; y += 1) {
-      for (let x = 0; x < v.cols; x += 1) {
-        if (v.grid[y][x] === '0') {
-          g.fillStyle = 'rgba(90,110,160,.16)';
-          g.fillRect(X(x), Y(y), tile + 0.5, tile + 0.5);
-        }
-      }
-    }
-    g.strokeStyle = 'rgba(160,190,255,.18)';
-    g.lineWidth = 1;
-    g.textAlign = 'center';
-    g.font = `${Math.round(tile * 0.38)}px sans-serif`;
-    for (const r of v.rooms) {
-      g.strokeRect(X(r.x), Y(r.y), r.w * tile, r.h * tile);
-      g.fillStyle = 'rgba(200,220,255,.35)';
-      g.fillText(r.nom, X(r.x + r.w / 2), Y(r.y) - 4);
-    }
+    // Sols et salles : décor FIXE, peint une seule fois hors écran puis recopié.
+    // (1 296 rectangles par image, soixante fois par seconde, pour rien.)
+    g.drawImage(this.mapImage(v, tile), X(0), Y(0));
 
     g.fillStyle = 'rgba(255,90,90,.55)';
     for (const d of v.doorsClosed ?? []) for (const c of d.tiles) g.fillRect(X(c.x), Y(c.y), tile, tile);
@@ -869,6 +895,34 @@ class AmongUI {
       g.arc(X(me.x), Y(me.y), R, 0, Math.PI * 2);
       g.fill();
     }
+  }
+
+  /** La carte, peinte une seule fois hors écran (re-faite si la taille change). */
+  mapImage(v, tile) {
+    const cle = `${v.mapVersion}|${Math.round(tile * 4)}`;
+    if (this.mapLayer && this.mapKey === cle) return this.mapLayer;
+    const c = document.createElement('canvas');
+    c.width = Math.ceil(v.cols * tile);
+    c.height = Math.ceil(v.rows * tile);
+    const g = c.getContext('2d');
+    g.fillStyle = 'rgba(90,110,160,.16)';
+    for (let y = 0; y < v.rows; y += 1) {
+      for (let x = 0; x < v.cols; x += 1) {
+        if (v.grid[y][x] === '0') g.fillRect(x * tile, y * tile, tile + 0.5, tile + 0.5);
+      }
+    }
+    g.strokeStyle = 'rgba(160,190,255,.18)';
+    g.lineWidth = 1;
+    g.textAlign = 'center';
+    g.font = `${Math.round(tile * 0.38)}px sans-serif`;
+    for (const r of v.rooms) {
+      g.strokeRect(r.x * tile, r.y * tile, r.w * tile, r.h * tile);
+      g.fillStyle = 'rgba(200,220,255,.35)';
+      g.fillText(r.nom, (r.x + r.w / 2) * tile, r.y * tile - 4);
+    }
+    this.mapLayer = c;
+    this.mapKey = cle;
+    return c;
   }
 
   drawPawn(g, x, y, tile, couleur, nom, mort, imposteur, moi = false) {

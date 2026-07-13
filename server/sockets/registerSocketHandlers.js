@@ -7,9 +7,23 @@ import { EVENTS } from '../../shared/events.js';
 import { GAME_STATE, LIMITS, ROOM_STATUS } from '../../shared/constants.js';
 import { sanitizeText, isValidChatMessage } from '../../shared/validation.js';
 
-export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRegistry }) {
+export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRegistry, admin = null }) {
   /** Raccourci : émet une erreur normalisée au client courant. */
   const fail = (code, message) => socket.emit(EVENTS.SYS_ERROR, { code, message });
+
+  // --- Supervision : compteur de messages et mesure de latence ---
+  if (admin) {
+    socket.onAny(() => admin.onMessage(socket.id));
+    socket.on(EVENTS.SYS_PONG, (payload) => admin.onPong(socket, payload));
+
+    // Page programmeur : le code est vérifié SERVEUR, avec limitation par IP.
+    socket.on(EVENTS.ADMIN_AUTH, ({ code } = {}) => {
+      const res = admin.auth(socket, code);
+      socket.emit(EVENTS.ADMIN_AUTHED, res);
+      if (res.ok) socket.emit(EVENTS.ADMIN_STATS, admin.stats());
+    });
+    socket.on(EVENTS.ADMIN_LEAVE, () => admin.quitter(socket.id));
+  }
 
   /** Raccourci : notification personnelle. */
   const notify = (type, message) => socket.emit(EVENTS.SYS_NOTIFICATION, { type, message });
@@ -192,6 +206,7 @@ export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRe
   // ------------------------------------------------------------------
 
   socket.on(EVENTS.GAME_START, () => {
+    admin?.onGameStart();
     const user = requireUser();
     const room = user && requireRoom(user, { hostOnly: true });
     if (!room) return;
@@ -257,6 +272,7 @@ export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRe
   // ------------------------------------------------------------------
 
   socket.on('disconnect', () => {
+    admin?.onDisconnect(socket);
     const user = users.get(socket.id);
     if (!user) return;
     leaveCurrentRoom(null);

@@ -177,11 +177,20 @@ export class AmongEngine {
     this.log = [];
     this.meeting = null;
     this.result = null;
+    this.logSeq = 0;
+    this.chatSeq = 0;
+    this.rosterVersion = 0;   // change quand quelqu'un meurt / est éjecté
+    this.mapVersion = 1;      // la carte est fixe : envoyée une seule fois
     this.say('🚀 Le Host règle la partie.');
     this.buildMap();
   }
 
-  say(text) { this.log.push(text); if (this.log.length > 90) this.log.shift(); }
+  // Numérotées : le Host n'envoie ensuite QUE les entrées nouvelles.
+  say(text) {
+    this.logSeq += 1;
+    this.log.push({ seq: this.logSeq, text });
+    if (this.log.length > 90) this.log.shift();
+  }
   playerOf(id) { return this.players.find((p) => p.id === id) ?? null; }
   get impostors() { return this.players.filter((p) => p.role === 'impostor'); }
   aliveOf(role) { return this.players.filter((p) => p.alive && p.role === role); }
@@ -320,7 +329,9 @@ export class AmongEngine {
       p.y = spawn.y + Math.sin(a) * 1.6;
       p.input = { dx: 0, dy: 0 };
       p.tasks = this.assignTasks(chosenCommunes);
+      p.tasksVersion = 1;
     }
+    this.rosterVersion += 1;
 
     this.phase = 'jeu';
     this.bodies = [];
@@ -418,6 +429,7 @@ export class AmongEngine {
     t.alive = false;
     t.input = { dx: 0, dy: 0 };
     t.step = null;
+    this.rosterVersion += 1;
     this.bodies.push({ id: `b-${t.id}`, playerId: t.id, pseudo: t.pseudo, couleur: t.couleur, x: t.x, y: t.y, at: now });
     // L'imposteur se place sur le corps : c'est le comportement du jeu.
     p.x = t.x; p.y = t.y;
@@ -487,6 +499,7 @@ export class AmongEngine {
     // (sinon il se trahirait) mais ne comptent jamais dans la barre.
     t.etape += 1;
     if (t.etape >= def.etapes.length) { t.fait = true; t.etape = def.etapes.length; }
+    p.tasksVersion = (p.tasksVersion ?? 1) + 1;
     if (p.role === 'crewmate') this.checkWin();
     return { ok: true, fait: t.fait };
   }
@@ -690,6 +703,7 @@ export class AmongEngine {
     if (ejecte) {
       ejecte.alive = false;
       ejecte.input = { dx: 0, dy: 0 };
+      this.rosterVersion += 1;
     }
     this.meeting.resultat = {
       ejecteId: ejecte?.id ?? null,
@@ -789,7 +803,8 @@ export class AmongEngine {
     const p = this.playerOf(pid);
     const clean = String(text ?? '').trim().slice(0, 220);
     if (!p || !clean) return { ok: false, error: 'Message vide.' };
-    const msg = { from: pid, pseudo: p.pseudo, couleur: p.couleur, text: clean, ts: this.now() };
+    this.chatSeq += 1;
+    const msg = { seq: this.chatSeq, from: pid, pseudo: p.pseudo, couleur: p.couleur, text: clean, ts: this.now() };
     if (!p.alive) { this.deadChat.push(msg); if (this.deadChat.length > 80) this.deadChat.shift(); return { ok: true }; }
     // Les vivants ne parlent QUE pendant les réunions : c'est la règle du jeu.
     if (this.phase !== 'reunion') return { ok: false, error: 'On ne parle qu\'en réunion.' };
@@ -831,36 +846,57 @@ export class AmongEngine {
    *  - POSITIONS : seulement ce que sa vision atteint (rayon + ligne de vue).
    *    Un joueur dans un conduit n'apparaît nulle part.
    */
-  getViewFor(pid) {
+  /**
+   * @param {object|null} sync ce que le destinataire possède DÉJÀ :
+   *        { map, rosterVersion, chatSeq, logSeq, tasksVersion }. Sans lui : vue complète.
+   *
+   * La carte, la liste des salles, les consoles, le roster et l'historique du chat
+   * ne changent pas dix fois par seconde. Les renvoyer à chaque image coûtait
+   * ~590 Ko/s à dix joueurs — pour des données identiques.
+   */
+  getViewFor(pid, sync = null) {
     const me = this.playerOf(pid);
     const now = this.now();
     const prog = this.taskProgress();
     const barre = this.options.barreTaches;
     const montrerBarre = barre === 'toujours' || (barre === 'reunions' && this.phase === 'reunion');
+    const aDejaLaCarte = sync && sync.map === this.mapVersion;
+    const aDejaLeRoster = sync && sync.rosterVersion === this.rosterVersion;
+    const aDejaLesTaches = sync && me && sync.tasksVersion === me.tasksVersion;
+    const depuisChat = sync ? (sync.chatSeq ?? 0) : 0;
+    const depuisLog = sync ? (sync.logSeq ?? 0) : 0;
 
     const base = {
       phase: this.phase,
       options: this.options,
       isHost: pid === this.hostId,
-      cols: COLS,
-      rows: ROWS,
-      grid: this.grid.map((r) => r.join('')),
-      rooms: ROOMS,
+      // --- statique : envoyé une seule fois ---
+      mapVersion: this.mapVersion,
+      cols: aDejaLaCarte ? undefined : COLS,
+      rows: aDejaLaCarte ? undefined : ROWS,
+      grid: aDejaLaCarte ? undefined : this.grid.map((r) => r.join('')),
+      rooms: aDejaLaCarte ? undefined : ROOMS,
+      stations: aDejaLaCarte ? undefined : this.stations,
+      // --- versionné : envoyé quand ça change ---
+      rosterVersion: this.rosterVersion,
+      roster: aDejaLeRoster ? undefined : this.players.map((p) => ({ id: p.id, pseudo: p.pseudo, couleur: p.couleur, alive: p.alive, score: p.score })),
+      tasksVersion: me?.tasksVersion ?? 0,
+      // --- dynamique ---
       doorsClosed: this.doorsClosed.filter((d) => d.until > now).map((d) => ({ room: d.room, tiles: this.doors[d.room] })),
-      stations: this.stations,
-      roster: this.players.map((p) => ({ id: p.id, pseudo: p.pseudo, couleur: p.couleur, alive: p.alive, score: p.score })),
       progress: montrerBarre ? { ratio: prog.ratio } : null,
       sabotage: this.sabotage
         ? { type: this.sabotage.type, reste: this.sabotage.until ? Math.max(0, this.sabotage.until - now) : null, fixes: this.sabotage.fixes }
         : null,
-      log: this.log.slice(-18),
-      chat: this.chat.slice(-60),
-      deadChat: me && !me.alive ? this.deadChat.slice(-60) : [],
+      chatSeq: this.chatSeq,
+      logSeq: this.logSeq,
+      log: this.log.filter((l) => l.seq > depuisLog),
+      chat: this.chat.filter((m) => m.seq > depuisChat),
+      deadChat: me && !me.alive ? this.deadChat.filter((m) => m.seq > depuisChat) : [],
       finalSummary: this.phase === 'fin' ? this.summary() : null,
     };
 
     if (!me || this.phase === 'setup' || this.phase === 'fin') {
-      return { ...base, me: me ? this.selfOf(me) : null, visibles: [], bodies: [], vents: [] };
+      return { ...base, me: me ? this.selfOf(me, aDejaLesTaches) : null, visibles: [], bodies: [], vents: [] };
     }
 
     // Réunion : tout le monde se voit (personne ne bouge, c'est l'écran de vote).
@@ -868,7 +904,7 @@ export class AmongEngine {
       const m = this.meeting;
       return {
         ...base,
-        me: this.selfOf(me),
+        me: this.selfOf(me, aDejaLesTaches),
         meeting: {
           byName: m.byName,
           bodyName: m.bodyName,
@@ -928,7 +964,7 @@ export class AmongEngine {
 
     return {
       ...base,
-      me: this.selfOf(me),
+      me: this.selfOf(me, aDejaLesTaches),
       ghost,
       visibles,
       bodies: this.bodies
@@ -955,7 +991,7 @@ export class AmongEngine {
     return null;
   }
 
-  selfOf(p) {
+  selfOf(p, sansTaches = false) {
     const now = this.now();
     return {
       id: p.id, pseudo: p.pseudo, couleur: p.couleur, role: p.role, alive: p.alive,
@@ -965,7 +1001,8 @@ export class AmongEngine {
       killReste: p.role === 'impostor' ? Math.max(0, p.killCooldownEnd - now) : null,
       sabotageReste: p.role === 'impostor' ? Math.max(0, this.sabotageCooldownEnd - now) : null,
       step: p.step,
-      tasks: p.tasks.map((t) => {
+      // La liste ne bouge qu'aux validations : inutile de la renvoyer 10 fois/s.
+      tasks: sansTaches ? undefined : p.tasks.map((t) => {
         const def = this.taskDef(t.id);
         return {
           id: t.id, nom: def.nom, mini: def.mini, long: def.long,

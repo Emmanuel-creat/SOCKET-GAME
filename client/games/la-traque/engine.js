@@ -141,10 +141,18 @@ export class TraqueEngine {
     this.bonuses = [];
     this.roundEnd = null;
     this.uid = 0;
+    this.logSeq = 0;
+    this.chatSeq = 0;
+    this.rosterVersion = 0;   // incrémenté quand la liste des joueurs change vraiment
     this.say('🔦 Le Host règle la partie.');
   }
 
-  say(text) { this.log.push({ t: this.now(), text }); if (this.log.length > 80) this.log.shift(); }
+  // Chaque entrée porte un numéro : le Host n'envoie ensuite QUE les nouvelles.
+  say(text) {
+    this.logSeq += 1;
+    this.log.push({ seq: this.logSeq, text });
+    if (this.log.length > 80) this.log.shift();
+  }
   playerOf(id) { return this.players.find((p) => p.id === id) ?? null; }
   get seeker() { return this.players.find((p) => p.role === 'chercheur') ?? null; }
   get hiders() { return this.players.filter((p) => p.role === 'cache'); }
@@ -159,6 +167,7 @@ export class TraqueEngine {
 
   buildMaze() {
     // 1 = mur. Génération par backtracking sur les cases impaires.
+    this.mapVersion = (this.mapVersion ?? 0) + 1;
     const g = Array.from({ length: ROWS }, () => Array(COLS).fill(1));
     const stack = [[1, 1]];
     g[1][1] = 0;
@@ -208,17 +217,35 @@ export class TraqueEngine {
     return { x: c.x + 0.5, y: c.y + 0.5 };
   }
 
-  /** Ligne de vue : aucun mur entre les deux points. */
+  /**
+   * Ligne de vue : aucun mur entre les deux points.
+   *
+   * Parcours de cases (DDA) : on saute de mur en mur au lieu d'échantillonner le
+   * segment tous les 0,14. Sur une portée de 16 cases, ~16 tests au lieu de ~115 —
+   * et cette fonction est appelée des milliers de fois par seconde chez le Host.
+   */
   hasLOS(ax, ay, bx, by) {
-    const d = dist(ax, ay, bx, by);
-    const steps = Math.ceil(d / 0.14);
-    for (let i = 1; i < steps; i += 1) {
-      const t = i / steps;
-      const x = ax + (bx - ax) * t;
-      const y = ay + (by - ay) * t;
-      if (this.isWall(Math.floor(x), Math.floor(y))) return false;
+    let x = Math.floor(ax);
+    let y = Math.floor(ay);
+    const ex = Math.floor(bx);
+    const ey = Math.floor(by);
+    if (x === ex && y === ey) return true;
+
+    const dx = bx - ax;
+    const dy = by - ay;
+    const stepX = dx > 0 ? 1 : -1;
+    const stepY = dy > 0 ? 1 : -1;
+    const dtX = dx !== 0 ? Math.abs(1 / dx) : Infinity;
+    const dtY = dy !== 0 ? Math.abs(1 / dy) : Infinity;
+    let tX = dx !== 0 ? (dx > 0 ? x + 1 - ax : ax - x) * dtX : Infinity;
+    let tY = dy !== 0 ? (dy > 0 ? y + 1 - ay : ay - y) * dtY : Infinity;
+
+    for (let garde = 0; garde < 256; garde += 1) {
+      if (tX < tY) { tX += dtX; x += stepX; } else { tY += dtY; y += stepY; }
+      if (x === ex && y === ey) return true;
+      if (this.isWall(x, y)) return false;
     }
-    return true;
+    return false;
   }
 
   /* ------------------------ mise en place ------------------------ */
@@ -297,6 +324,7 @@ export class TraqueEngine {
     if (this.options.bonus) for (let i = 0; i < 3; i += 1) this.spawnBonus();
     this.nextBonusAt = this.now() + BONUS_SPAWN_MS;
 
+    this.rosterVersion += 1;   // rôles et scores repartis : le roster a changé
     this.phase = 'cachette';
     this.phaseEnd = this.now() + this.options.hideMs;
     this.say(`🔦 Manche ${this.round}/${this.totalRounds} — ${this.seeker.pseudo} est le Chercheur (${bullets} balles). Les autres se cachent !`);
@@ -483,6 +511,7 @@ export class TraqueEngine {
 
   eliminate(p, cause, byId) {
     p.alive = false;
+    this.rosterVersion += 1;
     p.input = { dx: 0, dy: 0, aim: null, sneak: false, sprint: false };
     const seeker = this.playerOf(byId);
     if (seeker) seeker.elims += 1;
@@ -560,6 +589,7 @@ export class TraqueEngine {
       for (const p of survivants) { p.score += 2; p.survies += 1; }
       this.say(`⏰ Temps écoulé — ${survivants.length} caché(s) survivant(s) l'emportent !`);
     }
+    this.rosterVersion += 1;   // scores mis à jour
     this.roundEnd = {
       vainqueur,
       seekerId: seeker.id,
@@ -605,7 +635,8 @@ export class TraqueEngine {
     const p = this.playerOf(pid);
     const clean = String(text ?? '').trim().slice(0, 200);
     if (!p || !clean) return { ok: false, error: 'Message vide.' };
-    const msg = { from: pid, pseudo: p.pseudo, text: clean, ts: this.now() };
+    this.chatSeq += 1;
+    const msg = { seq: this.chatSeq, from: pid, pseudo: p.pseudo, text: clean, ts: this.now() };
     // Les éliminés parlent entre eux : sinon ils balanceraient les cachettes.
     const enJeu = this.phase === 'cachette' || this.phase === 'traque';
     if (enJeu && !p.alive) this.deadChat.push(msg);
@@ -652,20 +683,36 @@ export class TraqueEngine {
    * l'autorise (cône, contact, flash, sonar, radar). Un joueur qui lit le
    * réseau n'apprend donc rien de plus que ce que son écran affiche déjà.
    */
-  getViewFor(pid) {
+  /**
+   * @param {object|null} sync état de ce que le destinataire possède DÉJÀ :
+   *        { grid, rosterVersion, chatSeq, logSeq }. Sans lui, la vue est complète.
+   *
+   * Le labyrinthe, la liste des joueurs et l'historique du chat ne changent pas
+   * dix fois par seconde : les renvoyer à chaque image, c'était 580 Ko/s pour
+   * rien. On n'envoie désormais que ce que le destinataire n'a pas encore.
+   */
+  getViewFor(pid, sync = null) {
     const me = this.playerOf(pid);
     const t = this.now();
+    const aDejaLaCarte = sync && sync.grid === this.mapVersion;
+    const aDejaLeRoster = sync && sync.rosterVersion === this.rosterVersion;
+    const depuisChat = sync ? (sync.chatSeq ?? 0) : 0;
+    const depuisLog = sync ? (sync.logSeq ?? 0) : 0;
+
     const base = {
       phase: this.phase,
       round: this.round,
       totalRounds: this.totalRounds,
       options: this.options,
       isHost: pid === this.hostId,
-      cols: COLS,
-      rows: ROWS,
-      grid: this.grid ? this.grid.map((r) => r.join('')) : null,
+      // Statique : la carte n'est transmise qu'une fois par manche.
+      mapVersion: this.mapVersion,
+      cols: aDejaLaCarte ? undefined : COLS,
+      rows: aDejaLaCarte ? undefined : ROWS,
+      grid: aDejaLaCarte || !this.grid ? undefined : this.grid.map((r) => r.join('')),
       timeLeft: (this.phase === 'cachette' || this.phase === 'traque') ? Math.max(0, this.phaseEnd - t) : 0,
-      roster: this.players.map((p) => ({
+      rosterVersion: this.rosterVersion,
+      roster: aDejaLeRoster ? undefined : this.players.map((p) => ({
         id: p.id, pseudo: p.pseudo, skin: p.skin, role: p.role, alive: p.alive, score: p.score,
       })),
       me: me ? {
@@ -674,9 +721,12 @@ export class TraqueEngine {
         effects: { ...me.effects }, lastBonus: me.lastBonus ?? null,
       } : null,
       seekerName: this.seeker?.pseudo ?? null,
-      chat: this.chat.slice(-50),
-      deadChat: (me && !me.alive) ? this.deadChat.slice(-50) : [],
-      log: this.log.slice(-20).map((l) => l.text),
+      // Différentiel : uniquement les messages que le destinataire n'a pas encore.
+      chatSeq: this.chatSeq,
+      logSeq: this.logSeq,
+      chat: this.chat.filter((m) => m.seq > depuisChat),
+      deadChat: (me && !me.alive) ? this.deadChat.filter((m) => m.seq > depuisChat) : [],
+      log: this.log.filter((l) => l.seq > depuisLog),
       roundEnd: this.roundEnd,
       finalSummary: this.phase === 'fin' ? this.summary() : null,
       cone: { half: CONE_HALF_DEG, range: CONE_RANGE, halfBonus: TORCH_BONUS_HALF_DEG, rangeBonus: TORCH_BONUS_RANGE },
