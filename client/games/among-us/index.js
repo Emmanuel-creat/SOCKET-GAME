@@ -7,9 +7,24 @@
  */
 import { AmongEngine, ROOMS, TICK_MS } from './engine.js';
 
-const SEND_EVERY = 2;      // vues à 10 Hz, lissées à l'écran
+/**
+ * Budget serveur. Sur Render Free (0,1 CPU), ce qui coûte au serveur, c'est le
+ * NOMBRE de messages relayés — pas leur taille. On parle donc moins, et jamais
+ * pour rien.
+ */
 const INPUT_MIN_MS = 60;
-const LERP_MS = 110;
+const INPUT_KEEPALIVE_MS = 1000;
+const RENDER_MIN_MS = 25;   // ~40 images/s
+
+/** Ticks entre deux diffusions : plus il y a de monde, moins on parle. */
+function cadence(nb, phase) {
+  if (phase !== 'jeu') return 10;  // réunion, vote, écran de fin : 2 Hz suffisent
+  if (nb <= 4) return 2;   // 10 Hz
+  if (nb <= 6) return 3;   // 6,7 Hz
+  if (nb <= 8) return 4;   // 5 Hz
+  if (nb <= 12) return 5;  // 4 Hz
+  return 6;                // 3,3 Hz — à 15 joueurs, 14 vues par diffusion
+}
 
 const CSS = `
 .au { display: grid; grid-template-columns: 1fr 300px; gap: 12px; height: 100%; min-height: 0; width: 100%; color: var(--text, #e8ecff); }
@@ -163,7 +178,11 @@ class AmongUI {
   hostTick() {
     this.engine.tick();
     this.ticks += 1;
-    if (this.ticks % SEND_EVERY === 0 || this.engine.phase !== 'jeu') this.broadcast();
+    // Avant : 10 Hz en jeu, mais 20 Hz pendant TOUTE réunion — un écran fixe
+    // diffusé vingt fois par seconde à chaque joueur.
+    const pas = cadence(this.engine.players.length, this.engine.phase);
+    this.lerpMs = pas * TICK_MS + 40;
+    if (this.ticks % pas === 0) this.broadcast();
     if (this.engine.phase === 'fin' && !this.endTimer) {
       const result = this.engine.summary();
       this.endTimer = setTimeout(() => this.ctx.onEnd(result), 8000);
@@ -254,13 +273,23 @@ class AmongUI {
     };
   }
 
+  /**
+   * Une entrée n'est envoyée QUE si elle a changé : le Host garde de toute façon
+   * la dernière reçue. Avant, chaque invité expédiait ~16 messages/s en continu.
+   */
   sendInput(force = false) {
     const now = performance.now();
-    if (!force && now - this.lastSent < INPUT_MIN_MS) return;
-    this.lastSent = now;
     // On ne marche pas en pleine tâche : la console immobilise.
-    if (this.modal) { this.act({ a: 'input', dx: 0, dy: 0 }); return; }
-    const { dx, dy } = this.axis();
+    const { dx, dy } = this.modal ? { dx: 0, dy: 0 } : this.axis();
+    const sig = `${Math.round(dx * 8)}|${Math.round(dy * 8)}`;
+    const bouge = dx !== 0 || dy !== 0;
+    const rappel = bouge && now - this.lastSent > INPUT_KEEPALIVE_MS;
+
+    if (!force && !rappel && sig === this.lastSig) return;
+    if (!force && now - this.lastSent < INPUT_MIN_MS) return;
+
+    this.lastSig = sig;
+    this.lastSent = now;
     this.act({ a: 'input', dx, dy });
   }
 
@@ -804,6 +833,9 @@ class AmongUI {
 
   frame() {
     this.raf = requestAnimationFrame(() => this.frame());
+    const t = performance.now();
+    if (t - (this.lastFrame ?? 0) < RENDER_MIN_MS) return;   // ~40 images/s : la batterie des invités
+    this.lastFrame = t;
     const v = this.view;
     if (!v || !v.me) return;
     if (v.phase === 'reunion') { this.renderMeeting(); return; }
@@ -869,7 +901,7 @@ class AmongUI {
       g.fillText('☠️', X(b.x), Y(b.y) + tile * .12);
     }
 
-    const k = Math.min(1, (performance.now() - this.viewAt) / LERP_MS);
+    const k = Math.min(1, (performance.now() - this.viewAt) / (this.lerpMs ?? 150));
     for (const p of v.visibles ?? []) {
       const old = this.prev?.visibles?.find((o) => o.id === p.id);
       const px = old ? old.x + (p.x - old.x) * k : p.x;

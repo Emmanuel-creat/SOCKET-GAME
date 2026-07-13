@@ -10,7 +10,17 @@ import { store } from './Store.js';
 export class SocketClient {
   constructor() {
     /* global io */
-    this.socket = io();
+    // WebSocket EN PREMIER. Par défaut Socket.IO démarre en polling (une requête
+    // HTTP par message !) puis tente une bascule. Un invité resté en polling
+    // sature à lui seul un serveur à 0,1 CPU. Si le WebSocket est bloqué par le
+    // réseau, on retombe sur le mode par défaut.
+    this.socket = io({ transports: ['websocket'], upgrade: false });
+    this.socket.on('connect_error', () => {
+      if (this.secours || this.socket.connected) return;
+      this.secours = true;
+      this.socket.io.opts.transports = ['polling', 'websocket'];
+      this.socket.io.opts.upgrade = true;
+    });
     this.bindIncoming();
   }
 

@@ -11,9 +11,23 @@
  */
 import { TraqueEngine, SKINS, COLS, ROWS, TICK_MS, HIDE_CHOICES, ROUND_CHOICES } from './engine.js';
 
-const SEND_EVERY = 2;        // vues envoyées tous les 2 ticks (10 Hz) — lissées à l'écran
-const INPUT_MIN_MS = 60;     // anti-spam des entrées
-const LERP_MS = 110;         // lissage des positions distantes
+/**
+ * Budget serveur. Sur Render Free (0,1 CPU), le coût du serveur suit le NOMBRE de
+ * messages relayés, pas leur taille : 125 msg/s ≈ 3 % d'un cœur ici, bien plus sur
+ * un vCPU partagé. On envoie donc moins souvent, et jamais pour rien.
+ */
+const INPUT_MIN_MS = 60;     // délai minimal entre deux envois d'entrée
+const INPUT_KEEPALIVE_MS = 1000; // rappel pendant qu'on bouge (filet de sécurité)
+const RENDER_MIN_MS = 25;    // ~40 images/s : au-delà, on brûle la batterie des invités
+
+/** Ticks entre deux diffusions : plus il y a de monde, moins on parle. */
+function cadence(nb, phase) {
+  if (phase !== 'traque' && phase !== 'cachette') return 10; // rien ne bouge : 2 Hz suffisent
+  if (nb <= 4) return 2;   // 10 Hz
+  if (nb <= 6) return 3;   // 6,7 Hz  ← ta configuration
+  if (nb <= 8) return 4;   // 5 Hz
+  return 5;                // 4 Hz
+}
 const SKIN_KEY = 'arcade.la-traque.skin';
 
 const CSS = `
@@ -148,7 +162,11 @@ class TraqueUI {
   hostTick() {
     this.engine.tick();
     this.tickCount += 1;
-    if (this.tickCount % SEND_EVERY === 0 || this.engine.phase !== 'traque') this.broadcast();
+    // Avant : 10 Hz en traque, mais 20 Hz partout ailleurs — y compris pendant
+    // toute la phase de cachette et l'écran de manche, où presque rien ne change.
+    const pas = cadence(this.engine.players.length, this.engine.phase);
+    this.lerpMs = pas * TICK_MS + 40;
+    if (this.tickCount % pas === 0) this.broadcast();
     if (this.engine.phase === 'fin' && !this.endTimer) {
       const result = this.engine.summary();
       this.endTimer = setTimeout(() => this.ctx.onEnd(result), 7000);
@@ -243,18 +261,30 @@ class TraqueUI {
     return { dx, dy };
   }
 
+  /**
+   * Une entrée n'est envoyée QUE si elle a changé.
+   *
+   * Avant : un envoi toutes les 60 ms dès que la souris bougeait d'un pixel —
+   * ~16 messages/s et par invité, soit le poste le plus lourd du serveur, alors
+   * que le Host conserve de toute façon la dernière entrée reçue.
+   */
   sendInput(force = false) {
     const now = performance.now();
-    if (!force && now - this.lastSent < INPUT_MIN_MS) return;
-    this.lastSent = now;
     const { dx, dy } = this.axis();
-    this.act({
-      a: 'input',
-      dx, dy,
-      aim: this.aim,
-      sneak: this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') || this.sneakBtn,
-      sprint: this.keys.has('ControlLeft') || this.keys.has('KeyE') || this.sprintBtn,
-    });
+    const sneak = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') || this.sneakBtn;
+    const sprint = this.keys.has('ControlLeft') || this.keys.has('KeyE') || this.sprintBtn;
+
+    // Signature grossière : un frémissement de souris ne mérite pas un message.
+    const sig = `${Math.round(dx * 8)}|${Math.round(dy * 8)}|${Math.round(this.aim * 24)}|${sneak ? 1 : 0}|${sprint ? 1 : 0}`;
+    const bouge = dx !== 0 || dy !== 0;
+    const rappel = bouge && now - this.lastSent > INPUT_KEEPALIVE_MS;
+
+    if (!force && !rappel && sig === this.lastSig) return;          // rien de neuf : on se tait
+    if (!force && now - this.lastSent < INPUT_MIN_MS) return;       // et jamais plus de ~16/s
+
+    this.lastSig = sig;
+    this.lastSent = now;
+    this.act({ a: 'input', dx, dy, aim: Math.round(this.aim * 100) / 100, sneak, sprint });
   }
 
   /* ------------------------- construction du DOM ------------------------- */
@@ -522,6 +552,11 @@ class TraqueUI {
 
   frame() {
     this.raf = requestAnimationFrame(() => this.frame());
+    // Plafond d'images : au-delà de ~40/s on chauffe le téléphone des invités
+    // pour des images que personne ne distingue.
+    const t = performance.now();
+    if (t - (this.lastFrame ?? 0) < RENDER_MIN_MS) return;
+    this.lastFrame = t;
     const v = this.view;
     if (!this.canvas || !v || !v.grid || !v.me) return;
 
@@ -549,7 +584,7 @@ class TraqueUI {
     g.drawImage(this.mazeImage(v, tile), ox, oy);
 
     const lerp = (a, b) => {
-      const k = Math.min(1, (performance.now() - this.viewAt) / LERP_MS);
+      const k = Math.min(1, (performance.now() - this.viewAt) / (this.lerpMs ?? 150));
       return a + (b - a) * k;
     };
     const smooth = (ent) => {

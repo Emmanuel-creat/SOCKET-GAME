@@ -25,7 +25,10 @@ const PORT = process.env.PORT || 3000;
 const app = express();
 // Derrière le proxy de Render : sans ceci, tous les clients auraient l'IP du proxy.
 app.set('trust proxy', true);
-app.use(express.static(path.join(ROOT, 'client')));
+app.use(express.static(path.join(ROOT, 'client'), {
+  maxAge: '1h',        // le navigateur ne re-télécharge plus les assets à chaque partie
+  etag: true,
+}));
 // Le code partagé est servi tel quel : le client l'importe en ES module.
 app.use('/shared', express.static(path.join(ROOT, 'shared')));
 
@@ -34,7 +37,14 @@ app.get('/health', (_req, res) => res.json({ status: 'ok', uptime: process.uptim
 
 // --- Serveur HTTP + Socket.IO ---
 const httpServer = http.createServer(app);
-const io = new Server(httpServer);
+const io = new Server(httpServer, {
+  // Plan Render Free : 0,1 CPU. Chaque message coûte, sa taille beaucoup moins.
+  perMessageDeflate: false,   // compresser 60 petits messages/s coûte plus de CPU que ça n'économise de bande passante
+  httpCompression: false,     // idem pour le transport polling
+  maxHttpBufferSize: 1e5,     // 100 Ko : largement au-dessus de la plus grosse vue (par défaut : 1 Mo)
+  pingInterval: 25_000,       // battements de cœur plus espacés (défaut : 25 s / 20 s, on garde mais explicite)
+  pingTimeout: 20_000,
+});
 
 // --- Composition des services ---
 const gameRegistry = new GameRegistry(path.join(ROOT, 'client', 'games', 'games.json'));

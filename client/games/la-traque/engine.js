@@ -240,12 +240,21 @@ export class TraqueEngine {
     let tX = dx !== 0 ? (dx > 0 ? x + 1 - ax : ax - x) * dtX : Infinity;
     let tY = dy !== 0 ? (dy > 0 ? y + 1 - ay : ay - y) * dtY : Infinity;
 
-    for (let garde = 0; garde < 256; garde += 1) {
-      if (tX < tY) { tX += dtX; x += stepX; } else { tY += dtY; y += stepY; }
+    // On avance jusqu'au bout du SEGMENT (t > 1), pas jusqu'à la case d'arrivée :
+    // un rayon qui passe pile par un coin peut sauter cette case, et l'on tournerait
+    // alors dans le vide avant de conclure « mur » à tort. Depuis que les positions
+    // sont arrondies au centième, les coins alignés sont devenus fréquents.
+    while (true) {
+      if (tX < tY) {
+        if (tX > 1) return true;
+        tX += dtX; x += stepX;
+      } else {
+        if (tY > 1) return true;
+        tY += dtY; y += stepY;
+      }
       if (x === ex && y === ey) return true;
       if (this.isWall(x, y)) return false;
     }
-    return false;
   }
 
   /* ------------------------ mise en place ------------------------ */
@@ -458,6 +467,10 @@ export class TraqueEngine {
     };
     if (tryAxis(p.x + dx, p.y)) p.x += dx;
     if (tryAxis(p.x, p.y + dy)) p.y += dy;
+    // Au centième de case : « 12.345678901234 » dans chaque vue, dix fois par
+    // seconde et par joueur, c'est du poids réseau pour une précision invisible.
+    p.x = Math.round(p.x * 100) / 100;
+    p.y = Math.round(p.y * 100) / 100;
   }
 
   /** Bruit de pas : c'est ce que le Chercheur « entend ». Furtif = silencieux. */

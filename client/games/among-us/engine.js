@@ -398,8 +398,8 @@ export class AmongEngine {
     const dy = p.input.dy * speed * dt;
     if (!p.alive) {
       // Les fantômes traversent les murs — mais restent sur la carte.
-      p.x = clamp(p.x + dx, 0.5, COLS - 0.5);
-      p.y = clamp(p.y + dy, 0.5, ROWS - 0.5);
+      p.x = Math.round(clamp(p.x + dx, 0.5, COLS - 0.5) * 100) / 100;
+      p.y = Math.round(clamp(p.y + dy, 0.5, ROWS - 0.5) * 100) / 100;
       return;
     }
     const free = (nx, ny) => [
@@ -408,8 +408,10 @@ export class AmongEngine {
     ].every(([cx, cy]) => !this.isWall(Math.floor(cx), Math.floor(cy)));
     if (free(p.x + dx, p.y)) p.x += dx;
     if (free(p.x, p.y + dy)) p.y += dy;
-    p.x = clamp(p.x, 0.5, COLS - 0.5);
-    p.y = clamp(p.y, 0.5, ROWS - 0.5);
+    // Au centième de case : « 12.345678901234 » dans chaque vue, dix fois par
+    // seconde et par joueur, c'est du poids réseau pour une précision invisible.
+    p.x = Math.round(clamp(p.x, 0.5, COLS - 0.5) * 100) / 100;
+    p.y = Math.round(clamp(p.y, 0.5, ROWS - 0.5) * 100) / 100;
   }
 
   /* ------------------------ actions ------------------------ */
