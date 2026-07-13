@@ -84,7 +84,7 @@ export function openSettingsModal({ socket }) {
     content: [
       el('div', { className: 'field' }, [el('label', { htmlFor: 'settings-status' }, ['Mon statut']), statusSelect]),
       el('p', { style: { color: 'var(--text-dim)', fontSize: '0.85rem' } },
-        ['Les statuts « Dans un salon » et « En jeu » sont gérés automatiquement par la plateforme.']),
+        ['Propriétaire : Emmanuel BAILLY   Coprogrammeurs : Nathan GALINIER et Jérémie PRESUTTO.']),
 
       // --- Espace programmeur (accès restreint) ---
       el('hr', { style: { border: 'none', borderTop: '1px solid var(--glass-border, rgba(255,255,255,.1))', margin: '14px 0 10px' } }),
@@ -93,9 +93,9 @@ export function openSettingsModal({ socket }) {
         el('button', {
           className: 'btn btn--ghost',
           onClick: () => { modal.close(); openDevPanel({ socket }); },
-        }, ['🛠️ Accès restreint — supervision du serveur']),
+        }, ['Accès restreint : supervision du serveur']),
         el('p', { style: { color: 'var(--text-dim)', fontSize: '0.8rem', marginTop: '6px' } },
-          ['Code requis. Il est vérifié par le serveur, pas ici : cinq essais par adresse IP, puis blocage.']),
+          ['Après plusieurs années de recherches intensives, de litres de café et de quelques explosions de laboratoire (sans gravité... enfin presque), notre équipe de bio-ingénieurs est fière de vous présenter son plus grand succès. Ce serveur a été conçu pour combattre le plus grands fléaux pour l humanité : l ennui, en particulier lors des épisodes de désespoir intense, des longues soirées sans inspiration ou des moments où on fixe le plafond en se demandant quoi faire de sa vie.Grâce à une technologie de pointe totalement certifiée par personne, nous avons mis au point une formule révolutionnaire composée de fun, de chaos, de stratégies douteuses et de fous rires. Les effets secondaires peuvent inclure : une légère addiction, des amitiés renforcées... ou détruites, et une perte totale de la notion du temps.Toute notre équipe vous souhaite une excellente expérience. En cas de surdose de divertissement, il est recommandé de boire un verre d eau... puis de relancer une partie..']),
       ]),
     ],
     actions: [
