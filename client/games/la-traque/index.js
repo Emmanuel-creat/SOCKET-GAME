@@ -310,7 +310,11 @@ class TraqueUI {
     const rappel = bouge && now - this.lastSent > INPUT_KEEPALIVE_MS;
 
     if (!force && !rappel && sig === this.lastSig) return;          // rien de neuf : on se tait
-    if (!force && now - this.lastSent < INPUT_MIN_MS) return;       // et jamais plus de ~16/s
+
+    // Trop tôt : on ne l'envoie pas MAINTENANT. On ne l'oublie pas pour autant —
+    // lastSig n'est pas touché, donc la commande reste « neuve », et la boucle
+    // d'images repassera dans 25 ms pour la faire partir dès la fenêtre écoulée.
+    if (!force && now - this.lastSent < INPUT_MIN_MS) return;       // jamais plus de ~16/s
 
     this.lastSig = sig;
     this.lastSent = now;
@@ -589,6 +593,15 @@ class TraqueUI {
     if (t - (this.lastFrame ?? 0) < RENDER_MIN_MS) return;
     const dtMs = t - (this.lastFrame ?? t);
     this.lastFrame = t;
+
+    // Les entrées repartent d'ICI, pas seulement des événements clavier.
+    // sendInput() se tait tout seul quand rien n'a changé. Mais quand le limiteur
+    // refuse une commande (deux touches à moins de 60 ms — un demi-tour, une
+    // diagonale), c'est CET appel qui la renvoie. Sans lui, la commande était
+    // perdue pour de bon : aucun événement ne suivait, et le Host restait sur
+    // l'ancienne trajectoire pendant que le joueur, lui, se voyait courir ailleurs.
+    // C'est aussi ce qui fait enfin fonctionner le rappel d'1 Hz.
+    this.sendInput();
 
     // Prédiction locale (invités seulement — le Host est déjà la vérité).
     const vv = this.view;

@@ -313,8 +313,11 @@ class AmongUI {
     const bouge = dx !== 0 || dy !== 0;
     const rappel = bouge && now - this.lastSent > INPUT_KEEPALIVE_MS;
 
-    if (!force && !rappel && sig === this.lastSig) return;
-    if (!force && now - this.lastSent < INPUT_MIN_MS) return;
+    if (!force && !rappel && sig === this.lastSig) return;          // rien de neuf : on se tait
+
+    // Trop tôt : on ne l'envoie pas MAINTENANT, mais on ne l'oublie pas — lastSig
+    // reste inchangé, donc la boucle d'images la renverra dès la fenêtre écoulée.
+    if (!force && now - this.lastSent < INPUT_MIN_MS) return;       // jamais plus de ~16/s
 
     this.lastSig = sig;
     this.lastSent = now;
@@ -865,6 +868,13 @@ class AmongUI {
     if (t - (this.lastFrame ?? 0) < RENDER_MIN_MS) return;   // ~40 images/s : la batterie des invités
     const dtMs = t - (this.lastFrame ?? t);
     this.lastFrame = t;
+
+    // Les entrées repartent d'ICI, pas seulement des événements clavier. Ici, aucun
+    // mouvement de souris ne vient rappeler sendInput() : sans cet appel, une commande
+    // refusée par le limiteur (deux touches à moins de 60 ms) était perdue pour de bon,
+    // et le rappel d'1 Hz ne pouvait littéralement jamais se déclencher.
+    this.sendInput();
+
     const v = this.view;
     if (!v || !v.me) return;
 
