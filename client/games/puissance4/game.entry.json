@@ -1,0 +1,15 @@
+{
+  "id": "puissance4",
+  "nom": "Puissance 4",
+  "description": "Alignez quatre jetons avant votre adversaire dans ce duel de stratégie.",
+  "icone": "🔴",
+  "image": "/games/puissance4/assets/cover.png",
+  "joueursMin": 2,
+  "joueursMax": 2,
+  "etat": "disponible",
+  "version": "1.0.0",
+  "auteur": "Nathan",
+  "module": "index.js",
+  "chemin": "/games/puissance4/",
+  "visible": true
+}

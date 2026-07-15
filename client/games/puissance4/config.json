@@ -1,0 +1,18 @@
+{
+  "id": "puissance4",
+  "nom": "Puissance 4",
+  "version": "1.0.0",
+  "joueurs": { "min": 2, "max": 2 },
+  "architecture": "host-autoritaire",
+  "communication": "game:message (sendMessage(data, to=null) = diffusion salon)",
+  "regles": {
+    "grille": "6 lignes × 7 colonnes",
+    "camps": { "1": "Rouge 🔴 (Host / premier connecté)", "2": "Jaune 🟡 (second connecté)" },
+    "entame": "Rouge en manche 1, puis alternance à chaque revanche",
+    "victoire": "4 jetons alignés (horizontal, vertical, 2 diagonales) → +1 au gagnant",
+    "nul": "grille pleine sans alignement → +1 pour chacun",
+    "score": "compteur de match persistant à travers les revanches",
+    "deconnexion": "écran d'attente après 6 s de silence, victoire par forfait après 30 s"
+  },
+  "chat": "canal indépendant, historique persistant entre les manches"
+}
