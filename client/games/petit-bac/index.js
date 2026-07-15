@@ -99,7 +99,7 @@ export class PetitBacEngine {
     }
     this.players = players.map((p) => ({ id: p.id, pseudo: p.pseudo }));
     this.rng = rng;
-    this.categories = shuffle(CATEGORIES, rng).slice(0, NB_CATS);
+    this.categories = []; // renouvelées à CHAQUE manche (voir startRound)
     this.letterBag = shuffle(ALPHABET, rng).slice(0, TOTAL_ROUNDS);
     this.round = 0;
     this.catIndex = 0;
@@ -158,7 +158,9 @@ export class PetitBacEngine {
     this.catIndex = 0;
     this.letter = this.letterBag[(this.round - 1) % this.letterBag.length]
       || ALPHABET[Math.floor(this.rng() * ALPHABET.length)];
-    this.rounds.push({ letter: this.letter, answers: {}, scores: {}, doubles: [] });
+    // 10 catégories tirées AU HASARD dans le pool, renouvelées à chaque manche.
+    this.categories = shuffle(CATEGORIES, this.rng).slice(0, NB_CATS);
+    this.rounds.push({ letter: this.letter, categories: this.categories, answers: {}, scores: {}, doubles: [] });
     this.frozenUntil = {};
     this.phase = 'countdown';
     this.playEndsAt = 0;
@@ -293,7 +295,8 @@ export class PetitBacEngine {
       for (const p of this.players) {
         const s = r.scores[p.id] || {};
         let sum = 0;
-        for (const c of this.categories) sum += s[c] || 0;
+        const cats = r.categories || this.categories;
+        for (const c of cats) sum += s[c] || 0;
         if ((r.doubles || []).includes(p.id)) sum *= 2; // joker ✨ Double
         t[p.id] += sum;
       }

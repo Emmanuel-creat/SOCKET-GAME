@@ -1,0 +1,15 @@
+{
+  "id": "petit-bac",
+  "nom": "Petit Bac",
+  "description": "Une lettre, 10 catégories renouvelées à chaque manche, notation par vote… et des jokers pour pimenter le tout.",
+  "icone": "✏️",
+  "image": "/games/petit-bac/assets/cover.png",
+  "joueursMin": 2,
+  "joueursMax": 16,
+  "etat": "disponible",
+  "version": "1.3.0",
+  "auteur": "Nathan",
+  "module": "index.js",
+  "chemin": "/games/petit-bac/",
+  "visible": true
+}

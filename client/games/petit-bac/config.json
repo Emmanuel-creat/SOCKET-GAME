@@ -1,7 +1,7 @@
 {
   "id": "petit-bac",
   "nom": "Petit Bac",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "joueurs": {
     "min": 2,
     "max": 16
@@ -9,7 +9,7 @@
   "architecture": "host-autoritaire avec reprise (snapshot vers l'héritier, watchdog hostId)",
   "communication": "game:message (relais générique du moteur)",
   "regles": {
-    "categories": "10 tirées au sort (fixes) parmi un pool de 100",
+    "categories": "10 tirées AU HASARD à CHAQUE manche (renouvelées, pas de sélection figée) parmi un pool de 100",
     "manches": "5, lettres distinctes (K, Q, W, X, Y, Z exclus)",
     "saisie": "3 min 30 (extensible au Sablier), STOP actif quand les 10 champs sont remplis",
     "notation": "auto-gérée par vote : chacun note SON mot ❌0/➖1/✅2, une catégorie à la fois, avance quand tous ont voté",
