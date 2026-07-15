@@ -131,6 +131,7 @@ export class TraqueEngine {
     this.now = now;
     this.hostId = hostId ?? players[0].id;
     this.options = { ...DEFAULT_OPTIONS, ...options };
+    this.optionsVersion = 1;   // réglées une fois : inutile de les renvoyer 10 fois par seconde
     this.players = players.map((p, i) => ({
       id: p.id,
       pseudo: p.pseudo,
@@ -290,6 +291,7 @@ export class TraqueEngine {
     o.ballesParJoueur = clamp(Math.round(Number(o.ballesParJoueur) || BULLETS_PER_PLAYER), 1, 5);
     o.detecteurs = !!o.detecteurs;
     o.bonus = !!o.bonus;
+    this.optionsVersion += 1;
     this.options = o;
     return { ok: true };
   }
@@ -733,6 +735,7 @@ export class TraqueEngine {
     const me = this.playerOf(pid);
     const t = this.now();
     const aDejaLaCarte = sync && sync.grid === this.mapVersion;
+    const aDejaLesOptions = sync && sync.optionsVersion === this.optionsVersion;
     const aDejaLeRoster = sync && sync.rosterVersion === this.rosterVersion;
     const depuisChat = sync ? (sync.chatSeq ?? 0) : 0;
     const depuisLog = sync ? (sync.logSeq ?? 0) : 0;
@@ -741,7 +744,8 @@ export class TraqueEngine {
       phase: this.phase,
       round: this.round,
       totalRounds: this.totalRounds,
-      options: this.options,
+      optionsVersion: this.optionsVersion,
+      options: aDejaLesOptions ? undefined : this.options,
       isHost: pid === this.hostId,
       // Statique : la carte n'est transmise qu'une fois par manche.
       mapVersion: this.mapVersion,
@@ -852,8 +856,11 @@ export class TraqueEngine {
 
   /** Ce qu'on transmet d'un joueur VU : jamais plus que sa position apparente. */
   publicOf(p, how) {
+    // Ni pseudo ni skin : ils sont dans le roster, renvoyé UNIQUEMENT quand il change.
+    // Les répéter dans chaque vue coûtait ~40 octets par joueur et par image, pour une
+    // information qui n'a pas bougé depuis le début de la partie.
     return {
-      id: p.id, pseudo: p.pseudo, skin: p.skin, role: p.role,
+      id: p.id, role: p.role,
       x: p.x, y: p.y, angle: p.angle, how,
       torche: p.role === 'chercheur' ? !!p.effects.torche : false,
     };

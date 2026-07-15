@@ -170,6 +170,7 @@ export class AmongEngine {
     this.now = now;
     this.hostId = hostId ?? players[0].id;
     this.options = { ...DEFAULT_OPTIONS, ...options };
+    this.optionsVersion = 1;   // réglées une fois : inutile de les renvoyer 10 fois par seconde
     this.players = players.map((p, i) => ({
       id: p.id,
       pseudo: p.pseudo,
@@ -317,6 +318,7 @@ export class AmongEngine {
     o.tachesLongues = clamp(Math.round(Number(o.tachesLongues) ?? 2), 0, 4);
     o.tachesCommunes = clamp(Math.round(Number(o.tachesCommunes) ?? 1), 0, 2);
     if (o.tachesCourtes + o.tachesLongues + o.tachesCommunes === 0) o.tachesCourtes = 1;
+    this.optionsVersion += 1;
     this.options = o;
     return { ok: true };
   }
@@ -882,6 +884,7 @@ export class AmongEngine {
     const barre = this.options.barreTaches;
     const montrerBarre = barre === 'toujours' || (barre === 'reunions' && this.phase === 'reunion');
     const aDejaLaCarte = sync && sync.map === this.mapVersion;
+    const aDejaLesOptions = sync && sync.optionsVersion === this.optionsVersion;
     const aDejaLeRoster = sync && sync.rosterVersion === this.rosterVersion;
     const aDejaLesTaches = sync && me && sync.tasksVersion === me.tasksVersion;
     const depuisChat = sync ? (sync.chatSeq ?? 0) : 0;
@@ -889,7 +892,8 @@ export class AmongEngine {
 
     const base = {
       phase: this.phase,
-      options: this.options,
+      optionsVersion: this.optionsVersion,
+      options: aDejaLesOptions ? undefined : this.options,
       isHost: pid === this.hostId,
       // --- statique : envoyé une seule fois ---
       mapVersion: this.mapVersion,
@@ -940,7 +944,7 @@ export class AmongEngine {
           resultat: m.resultat,
         },
         visibles: this.players.map((p) => ({
-          id: p.id, pseudo: p.pseudo, couleur: p.couleur, alive: p.alive,
+          id: p.id, alive: p.alive,   // pseudo/couleur : dans le roster, pas dans chaque vue
           // Le rôle n'est révélé qu'à la fin, ou entre complices.
           role: this.roleVisibleFor(me, p),
         })),
@@ -959,7 +963,7 @@ export class AmongEngine {
       const vu = ghost || (dist(me, p) <= vision && this.hasLOS(me, p));
       if (!vu) continue;
       visibles.push({
-        id: p.id, pseudo: p.pseudo, couleur: p.couleur, alive: p.alive,
+        id: p.id, alive: p.alive,   // pseudo/couleur : dans le roster, pas dans chaque vue
         x: p.x, y: p.y, vented: !!p.vented,
         role: this.roleVisibleFor(me, p),
       });

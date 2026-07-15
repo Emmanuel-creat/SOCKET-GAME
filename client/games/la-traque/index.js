@@ -11,6 +11,7 @@
  */
 import { TraqueEngine, SKINS, COLS, ROWS, TICK_MS, HIDE_CHOICES, ROUND_CHOICES, stepCollision } from './engine.js';
 import { Predictor } from '../shared/predictor.js';
+import { Interpolator } from '../shared/interpolator.js';
 
 /**
  * Budget serveur. Sur Render Free (0,1 CPU), le coût du serveur suit le NOMBRE de
@@ -23,11 +24,15 @@ const RENDER_MIN_MS = 25;    // ~40 images/s : au-delà, on brûle la batterie d
 
 /** Ticks entre deux diffusions : plus il y a de monde, moins on parle. */
 function cadence(nb, phase) {
+  // Le pas = nombre de ticks (50 ms) entre deux diffusions. pas=2 → 10 Hz.
+  // Avant, on ralentissait dès 6 joueurs pour ménager le serveur. Mesures faites :
+  // le serveur tient 10 Hz à 10 joueurs à 2,3 % de son cœur, et le Host téléverse
+  // moins de 1 Mbit/s (vues allégées). Le facteur limitant, c'était le lissage, pas
+  // la charge : on garde donc 10 Hz jusqu'à 10 joueurs, ce que l'interpolateur exploite.
   if (phase !== 'traque' && phase !== 'cachette') return 10; // rien ne bouge : 2 Hz suffisent
-  if (nb <= 4) return 2;   // 10 Hz
-  if (nb <= 6) return 3;   // 6,7 Hz  ← ta configuration
-  if (nb <= 8) return 4;   // 5 Hz
-  return 5;                // 4 Hz
+  if (nb <= 10) return 2;  // 10 Hz
+  if (nb <= 14) return 3;  // 6,7 Hz
+  return 4;                // 5 Hz — au-delà de 14, on lève le pied
 }
 const SKIN_KEY = 'arcade.la-traque.skin';
 
@@ -119,6 +124,7 @@ class TraqueUI {
     // Prédiction locale : l'invité avance tout de suite, sans attendre le Host.
     // Même fonction de déplacement que le moteur — importée, pas recopiée.
     this.pred = new Predictor(stepCollision);
+    this.interp = new Interpolator();   // lisse la position des AUTRES joueurs
   }
 
   get isHost() { return this.ctx.me.id === this.ctx.hostId; }
@@ -169,7 +175,6 @@ class TraqueUI {
     // Avant : 10 Hz en traque, mais 20 Hz partout ailleurs — y compris pendant
     // toute la phase de cachette et l'écran de manche, où presque rien ne change.
     const pas = cadence(this.engine.players.length, this.engine.phase);
-    this.lerpMs = pas * TICK_MS + 40;
     if (this.tickCount % pas === 0) this.broadcast();
     if (this.engine.phase === 'fin' && !this.endTimer) {
       const result = this.engine.summary();
@@ -185,7 +190,7 @@ class TraqueUI {
   broadcast() {
     const e = this.engine;
     const etat = () => ({
-      grid: e.mapVersion, rosterVersion: e.rosterVersion, chatSeq: e.chatSeq, logSeq: e.logSeq,
+      grid: e.mapVersion, rosterVersion: e.rosterVersion, optionsVersion: e.optionsVersion, chatSeq: e.chatSeq, logSeq: e.logSeq,
     });
     for (const p of e.players) {
       if (p.id === this.me.id) continue;
@@ -209,18 +214,37 @@ class TraqueUI {
       this.mazeLayer = null;   // nouveau labyrinthe : on le re-dessinera une fois
     }
     if (view.roster) s.roster = view.roster;
+    // Les options ne sont envoyées qu'au premier tour (elles ne changent pas en jeu).
+    // On les garde : le Host ne les répète plus dans les vues suivantes.
+    if (view.options) s.options = view.options;
     if (view.chat?.length) s.chat = [...s.chat, ...view.chat].slice(-60);
     if (view.deadChat?.length) s.deadChat = [...s.deadChat, ...view.deadChat].slice(-60);
     if (view.log?.length) s.log = [...s.log, ...view.log].slice(-25);
 
+    // Le Host n'envoie plus pseudo/skin dans chaque joueur visible — ils sont dans le
+    // roster, qui ne change qu'à l'arrivée/départ d'un joueur. On les rattache ici, par
+    // id, pour que le rendu retrouve ses champs habituels sans qu'on ait à le toucher.
+    const parId = new Map((s.roster ?? []).map((p) => [p.id, p]));
+    const habiller = (ent) => {
+      const info = parId.get(ent.id);
+      return info ? { ...ent, pseudo: info.pseudo, skin: info.skin } : ent;
+    };
+
     const complete = {
       ...view,
       grid: s.grid, cols: s.cols, rows: s.rows, mapVersion: s.mapVersion,
+      options: view.options ?? s.options,
       roster: s.roster ?? [], chat: s.chat, deadChat: s.deadChat, log: s.log,
+      visibles: (view.visibles ?? []).map(habiller),
     };
     this.prev = this.view;
     this.view = complete;
     this.viewAt = performance.now();
+
+    // Les autres joueurs entrent dans le tampon d'interpolation, horodatés par le Host
+    // (complete.t). C'est de LÀ que leur position à l'écran est lue, image par image —
+    // plus de « saut vers la dernière vue ».
+    if (!this.isHost && Number.isFinite(complete.t)) this.interp.pousser(complete.t, complete.visibles ?? []);
 
     // --- prédiction locale : on se recale sur la vérité du Host ---
     const moi = complete.me;
@@ -233,6 +257,7 @@ class TraqueUI {
     if (complete.phase !== this.lastPhase) {
       this.lastPhase = complete.phase;
       if (complete.me) this.pred.reset(complete.me.x, complete.me.y);
+      this.interp.reset();   // nouvelle phase : on ne lisse pas par-dessus l'ancienne carte
       this.build();
     }
     this.syncHud();
@@ -603,6 +628,9 @@ class TraqueUI {
     // C'est aussi ce qui fait enfin fonctionner le rappel d'1 Hz.
     this.sendInput();
 
+    // On fait avancer l'horloge d'interpolation des autres joueurs (invités seulement).
+    if (!this.isHost) this.interp.avancer(dtMs);
+
     // Prédiction locale (invités seulement — le Host est déjà la vérité).
     const vv = this.view;
     if (!this.isHost && vv?.me && this.pred.pos && (vv.phase === 'traque' || vv.phase === 'cachette')) {
@@ -635,14 +663,10 @@ class TraqueUI {
     // (651 rectangles à chaque image, soixante fois par seconde, pour un décor fixe.)
     g.drawImage(this.mazeImage(v, tile), ox, oy);
 
-    const lerp = (a, b) => {
-      const k = Math.min(1, (performance.now() - this.viewAt) / (this.lerpMs ?? 150));
-      return a + (b - a) * k;
-    };
-    const smooth = (ent) => {
-      const old = this.prev?.visibles?.find((o) => o.id === ent.id);
-      return old ? { x: lerp(old.x, ent.x), y: lerp(old.y, ent.y) } : { x: ent.x, y: ent.y };
-    };
+    // Position lissée des autres joueurs : lue dans le tampon horodaté. Le Host, lui,
+    // affiche les entités telles quelles (il EST la vérité, il n'interpole personne).
+    const mur = (x, y) => v.grid?.[y]?.[x] === '1';
+    const smooth = (ent) => (this.isHost ? { x: ent.x, y: ent.y } : this.interp.ou(ent, mur));
 
     // Halo du joueur (sa propre bulle de perception).
     // Ma position PRÉDITE : sinon je me verrais réagir avec un aller-retour de retard.

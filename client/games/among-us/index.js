@@ -7,6 +7,7 @@
  */
 import { AmongEngine, ROOMS, TICK_MS, stepCollision } from './engine.js';
 import { Predictor } from '../shared/predictor.js';
+import { Interpolator } from '../shared/interpolator.js';
 
 /**
  * Budget serveur. Sur Render Free (0,1 CPU), ce qui coûte au serveur, c'est le
@@ -19,12 +20,15 @@ const RENDER_MIN_MS = 25;   // ~40 images/s
 
 /** Ticks entre deux diffusions : plus il y a de monde, moins on parle. */
 function cadence(nb, phase) {
+  // Le pas = nombre de ticks (50 ms) entre deux diffusions. pas=2 → 10 Hz.
+  // Mesuré : serveur à 2,3 % de son cœur et Host sous 1 Mbit/s à 10 Hz / 10 joueurs,
+  // vues allégées. On tient donc 10 Hz jusqu'à 10 joueurs (l'interpolateur suit),
+  // puis on lève progressivement le pied pour les très grosses parties.
   if (phase !== 'jeu') return 10;  // réunion, vote, écran de fin : 2 Hz suffisent
-  if (nb <= 4) return 2;   // 10 Hz
-  if (nb <= 6) return 3;   // 6,7 Hz
-  if (nb <= 8) return 4;   // 5 Hz
-  if (nb <= 12) return 5;  // 4 Hz
-  return 6;                // 3,3 Hz — à 15 joueurs, 14 vues par diffusion
+  if (nb <= 10) return 2;  // 10 Hz
+  if (nb <= 12) return 3;  // 6,7 Hz
+  if (nb <= 14) return 4;  // 5 Hz
+  return 5;                // 4 Hz
 }
 
 const CSS = `
@@ -127,6 +131,7 @@ class AmongUI {
     this.sideSig = null;
     // Prédiction locale : l'invité avance tout de suite, sans attendre le Host.
     this.pred = new Predictor(stepCollision);
+    this.interp = new Interpolator();   // lisse la position des AUTRES joueurs
   }
 
   get isHost() { return this.ctx.me.id === this.ctx.hostId; }
@@ -184,7 +189,6 @@ class AmongUI {
     // Avant : 10 Hz en jeu, mais 20 Hz pendant TOUTE réunion — un écran fixe
     // diffusé vingt fois par seconde à chaque joueur.
     const pas = cadence(this.engine.players.length, this.engine.phase);
-    this.lerpMs = pas * TICK_MS + 40;
     if (this.ticks % pas === 0) this.broadcast();
     if (this.engine.phase === 'fin' && !this.endTimer) {
       const result = this.engine.summary();
@@ -204,6 +208,7 @@ class AmongUI {
         map: e.mapVersion,
         rosterVersion: e.rosterVersion,
         tasksVersion: p.tasksVersion,
+        optionsVersion: e.optionsVersion,
         chatSeq: e.chatSeq,
         logSeq: e.logSeq,
         deadReset: sync?.deadReset || !p.alive,
@@ -222,20 +227,36 @@ class AmongUI {
       this.mapLayer = null;
     }
     if (view.roster) s.roster = view.roster;
+    // Les options ne changent pas pendant la partie : envoyées une fois, gardées ici.
+    if (view.options) s.options = view.options;
     if (view.me?.tasks) s.tasks = view.me.tasks;
     if (view.chat?.length) s.chat = [...s.chat, ...view.chat].slice(-60);
     if (view.deadChat?.length) s.deadChat = [...s.deadChat, ...view.deadChat].slice(-60);
     if (view.log?.length) s.log = [...s.log, ...view.log].slice(-20);
 
+    // Le Host n'envoie plus pseudo/couleur dans chaque joueur visible — ils sont dans le
+    // roster, qui ne change qu'à l'arrivée/départ d'un joueur. On les rattache ici, par
+    // id, pour que le rendu retrouve ses champs habituels sans qu'on ait à le toucher.
+    const parId = new Map((s.roster ?? []).map((p) => [p.id, p]));
+    const habiller = (ent) => {
+      const info = parId.get(ent.id);
+      return info ? { ...ent, pseudo: info.pseudo, couleur: info.couleur } : ent;
+    };
+
     const complete = {
       ...view,
       grid: s.grid, cols: s.cols, rows: s.rows, rooms: s.rooms, stations: s.stations, mapVersion: s.mapVersion,
+      options: view.options ?? s.options,
       roster: s.roster ?? [], chat: s.chat, deadChat: s.deadChat, log: s.log,
       me: view.me ? { ...view.me, tasks: view.me.tasks ?? s.tasks ?? [] } : null,
+      visibles: (view.visibles ?? []).map(habiller),
     };
     this.prev = this.view;
     this.view = complete;
     this.viewAt = performance.now();
+
+    // Les autres joueurs entrent dans le tampon d'interpolation, horodatés par le Host.
+    if (!this.isHost && Number.isFinite(complete.t)) this.interp.pousser(complete.t, complete.visibles ?? []);
 
     // --- prédiction locale : on se recale sur la vérité du Host ---
     const moi = complete.me;
@@ -252,6 +273,7 @@ class AmongUI {
     const key = `${complete.phase}|${complete.meeting?.etape ?? ''}`;
     if (key !== this.lastKey) {
       this.lastKey = key;
+      this.interp.reset();   // changement de phase/écran : on repart d'un tampon vide
       if (this.modal?.timer) clearInterval(this.modal.timer);
       this.modal = null;
       this.meetKey = null;
@@ -875,6 +897,9 @@ class AmongUI {
     // et le rappel d'1 Hz ne pouvait littéralement jamais se déclencher.
     this.sendInput();
 
+    // Horloge d'interpolation des autres joueurs (invités seulement).
+    if (!this.isHost) this.interp.avancer(dtMs);
+
     const v = this.view;
     if (!v || !v.me) return;
 
@@ -948,12 +973,12 @@ class AmongUI {
       g.fillText('☠️', X(b.x), Y(b.y) + tile * .12);
     }
 
-    const k = Math.min(1, (performance.now() - this.viewAt) / (this.lerpMs ?? 150));
+    // Position lissée des autres joueurs : lue dans le tampon horodaté. Le Host affiche
+    // les entités telles quelles (il EST la vérité). Un mur ferme borne l'extrapolation.
+    const mur = (x, y) => v.grid?.[y]?.[x] !== '0';
     for (const p of v.visibles ?? []) {
-      const old = this.prev?.visibles?.find((o) => o.id === p.id);
-      const px = old ? old.x + (p.x - old.x) * k : p.x;
-      const py = old ? old.y + (p.y - old.y) * k : p.y;
-      this.drawPawn(g, X(px), Y(py), tile, p.couleur, p.pseudo, !p.alive, p.role === 'impostor');
+      const s2 = this.isHost ? { x: p.x, y: p.y } : this.interp.ou(p, mur);
+      this.drawPawn(g, X(s2.x), Y(s2.y), tile, p.couleur, p.pseudo, !p.alive, p.role === 'impostor');
     }
     this.drawPawn(g, X(me.x), Y(me.y), tile, me.couleur, me.pseudo, !me.alive, me.role === 'impostor', true);
 
