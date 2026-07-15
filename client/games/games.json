@@ -129,9 +129,9 @@
       "image": "/games/puissance4/assets/cover.png",
       "joueursMin": 2,
       "joueursMax": 2,
-      "etat": "en-developpement",
-      "version": "0.0.0",
-      "auteur": "Manu",
+      "etat": "disponible",
+      "version": "1.0.0",
+      "auteur": "Nathan",
       "module": "index.js",
       "chemin": "/games/puissance4/",
       "visible": true
