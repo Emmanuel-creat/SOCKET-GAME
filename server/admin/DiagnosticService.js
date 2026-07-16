@@ -146,7 +146,26 @@ export class DiagnosticService {
         resPayloads.map((r) => `${r.label} : ${r.ok ? `${r.latence} ms, intact` : (r.latence === null ? 'perdu (timeout)' : 'ALTÉRÉ en transit')}`).join(' · '),
       );
 
-      // 5) Relais réel game:message — seulement si le client est actuellement en partie
+      // 5) Cohérence salon / identité — ce que le SERVEUR voit réellement pour ce
+      // client, avant même de tester le relais. Ça remplace la devinette par un
+      // fait : est-ce que `room.has(user.id)` (la vérification qui garde le
+      // relais ciblé) est vraie en ce moment, pour ce client précis ?
+      const roomActuel = user.roomId ? this.rooms.get(user.roomId) : null;
+      if (!roomActuel) {
+        noter('Cohérence salon (vu par le serveur)', null, 'ce client n\'est associé à aucun salon en ce moment');
+      } else {
+        const present = roomActuel.has(user.id);
+        const estHost = roomActuel.isHost(user.id);
+        noter(
+          'Cohérence salon (vu par le serveur)',
+          present,
+          `salon « ${roomActuel.name} » (${roomActuel.status}) · ${roomActuel.players.length} joueur(s) listé(s) · `
+          + `ce client est-il dans room.players ? ${present ? 'OUI' : 'NON — c\'est la cause : la vérification qui garde le relais ciblé échoue pour lui'} · `
+          + `Host de ce salon ? ${estHost ? 'oui' : 'non'}`,
+        );
+      }
+
+      // 6) Relais réel game:message — seulement si le client est actuellement en partie
       const room = user.roomId ? this.rooms.get(user.roomId) : null;
       if (!room || room.status !== ROOM_STATUS.IN_GAME) {
         noter('Relais en partie (game:message)', null, 'non applicable — ce client n\'est pas en partie en ce moment');

@@ -16,13 +16,17 @@ qui teste, contre CE client précis, dans l'ordre :
 4. **Intégrité charge utile** — trois tailles (commande ~80 o, vue ~1 Ko,
    labyrinthe ~20 Ko) : la donnée arrive-t-elle intacte, sans troncature ni
    altération ?
-5. **Relais en partie (`game:message`)** — **le test qui compte** : si le
-   client ciblé est actuellement en partie, on lui demande de s'envoyer à
-   lui-même 60 paquets réels via `sendGameMessage` — la même fonction que
-   toute commande de jeu, sans copie ni raccourci — et on vérifie combien
+5. **Cohérence salon (vu par le serveur)** — fait, pas hypothèse : ce
+   client est-il bien listé dans `room.players` du salon auquel il pense
+   appartenir ? C'est exactement la vérification qui garde le relais ciblé
+   (`room.has(target.id)`), donc si elle est fausse, on sait immédiatement
+   pourquoi le test suivant va échouer — plus besoin de deviner.
+6. **Relais en partie (`game:message`)** — si le client ciblé est
+   actuellement en partie, on lui demande de s'envoyer à lui-même 60
+   paquets réels via `sendGameMessage` — la même fonction que toute
+   commande de jeu, sans copie ni raccourci — et on vérifie combien
    reviennent. Ce test emprunte EXACTEMENT le chemin qu'une commande de
-   La Traque emprunte (vérification `room.status === IN_GAME`, recherche du
-   destinataire), avec les mêmes conditions d'échec.
+   La Traque emprunte, avec les mêmes conditions d'échec.
 
 Si les tests 1 à 4 sont au vert et que le test 5 échoue, le problème n'est
 pas le réseau : il est dans le relais ciblé lui-même pour ce client
