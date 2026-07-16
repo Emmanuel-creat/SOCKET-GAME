@@ -38,6 +38,20 @@ const CSS = `
 .dev__auth { max-width: 380px; margin: 12vh auto; display: grid; gap: 10px; }
 .dev__auth input { background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.15); color: inherit; border-radius: 10px; padding: 10px 12px; font-size: 1.1rem; letter-spacing: .35em; text-align: center; }
 .dev__err { color: #ff6b6b; font-size: .84rem; min-height: 1.2em; text-align: center; }
+.dev__diagbtn { padding: 2px 9px; font-size: .72rem; }
+.dev__diagbox { display: grid; gap: 8px; }
+.dev__diagtitle { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dev__diagtitle b { font-size: 1rem; }
+.dev__diagspin { width: 13px; height: 13px; border-radius: 50%; border: 2px solid rgba(255,255,255,.2); border-top-color: #38fedc; animation: dev-spin .8s linear infinite; }
+@keyframes dev-spin { to { transform: rotate(360deg); } }
+.dev__step { display: flex; align-items: flex-start; gap: 9px; padding: 7px 4px; border-bottom: 1px solid rgba(255,255,255,.05); font-size: .84rem; }
+.dev__step:last-child { border-bottom: none; }
+.dev__stepicon { flex: none; width: 18px; text-align: center; }
+.dev__stepbody b { display: block; font-size: .84rem; }
+.dev__stepbody span { color: #99a; font-size: .8rem; }
+.dev__step--ok .dev__stepbody b { color: #50ef39; }
+.dev__step--ko .dev__stepbody b { color: #ff6b6b; }
+.dev__step--na .dev__stepbody b { color: #778; }
 `;
 
 function h(tag, props = {}, children = []) {
@@ -119,6 +133,7 @@ class DevPanel {
     this.socket = socket;
     this.stats = null;
     this.root = null;
+    this.diag = null; // { pseudo, socketId, enCours, log:[], rapport } — un diagnostic à la fois
   }
 
   open() {
@@ -131,6 +146,17 @@ class DevPanel {
 
     this.offAuth = bus.on('admin:authed', (res) => this.onAuth(res));
     this.offStats = bus.on('admin:stats', (s) => { this.stats = s; this.render(); });
+    this.offDiagProgress = bus.on('diag:progress', (p) => {
+      if (!this.diag) return;
+      this.diag.log.push(p);
+      this.render();
+    });
+    this.offDiagResult = bus.on('diag:result', (r) => {
+      if (!this.diag) return;
+      this.diag.enCours = false;
+      this.diag.rapport = r;
+      this.render();
+    });
 
     this.renderAuth();
   }
@@ -139,10 +165,20 @@ class DevPanel {
     this.socket.adminLeave();
     this.offAuth?.();
     this.offStats?.();
+    this.offDiagProgress?.();
+    this.offDiagResult?.();
     window.removeEventListener('keydown', this.onEsc);
     this.style?.remove();
     this.root?.remove();
     this.root = null;
+  }
+
+  /* ---------------- diagnostic réseau ---------------- */
+
+  lancerDiag(socketId, pseudo) {
+    this.diag = { pseudo, socketId, enCours: true, log: [], rapport: null };
+    this.socket.runDiagnostic(socketId);
+    this.render();
   }
 
   /* ---------------- authentification ---------------- */
@@ -181,6 +217,57 @@ class DevPanel {
     }
   }
 
+  /** Une étape (en cours, ok, échec, ou non applicable) sous forme de ligne. */
+  stepRow({ nom, ok, detail }) {
+    const cls = ok === true ? 'dev__step--ok' : ok === false ? 'dev__step--ko' : 'dev__step--na';
+    const icone = ok === true ? '✅' : ok === false ? '❌' : ok === null ? '➖' : '⏳';
+    return h('div', { className: `dev__step ${cls}` }, [
+      h('div', { className: 'dev__stepicon' }, icone),
+      h('div', { className: 'dev__stepbody' }, [h('b', {}, nom), h('span', {}, detail ?? '')]),
+    ]);
+  }
+
+  /** Panneau de résultats du diagnostic en cours ou terminé (masqué si aucun diagnostic lancé). */
+  diagPanel() {
+    if (!this.diag) return null;
+    const d = this.diag;
+
+    if (d.rapport?.erreur) {
+      return h('div', { className: 'dev__panel' }, [
+        h('div', { className: 'dev__diagtitle' }, [h('h3', { style: 'margin:0' }, `🩺 Diagnostic — ${d.pseudo}`)]),
+        this.stepRow({ nom: 'Impossible de lancer le diagnostic', ok: false, detail: d.rapport.erreur }),
+      ]);
+    }
+
+    // Étapes affichées : chaque étape passe de « en cours » (ok: undefined) à son
+    // résultat final (ok: true/false/null) — on garde la DERNIÈRE mise à jour de
+    // chaque nom, dans l'ordre de sa première apparition.
+    const source = d.rapport?.etapes ?? d.log;
+    const parNom = new Map();
+    for (const e of source) {
+      const nom = e.nom ?? e.etape;
+      parNom.set(nom, { nom, ok: e.ok, detail: e.detail });
+    }
+    const etapes = [...parNom.values()];
+
+    const echecs = etapes.filter((e) => e.ok === false).length;
+    const bilan = !d.enCours && d.rapport
+      ? (echecs === 0
+        ? '✅ Rien d\'anormal détecté sur ces tests.'
+        : `⚠️ ${echecs} test${echecs > 1 ? 's' : ''} en échec — voir le détail ci-dessous.`)
+      : null;
+
+    return h('div', { className: 'dev__panel' }, [
+      h('div', { className: 'dev__diagtitle' }, [
+        h('h3', { style: 'margin:0' }, `🩺 Diagnostic — ${d.pseudo}`),
+        d.enCours ? h('span', { className: 'dev__diagspin' }) : null,
+        h('span', { style: 'color:#778;font-size:.78rem' }, d.enCours ? 'en cours…' : 'terminé'),
+      ]),
+      h('div', { className: 'dev__diagbox' }, etapes.map((e) => this.stepRow(e))),
+      bilan ? h('p', { style: 'margin:4px 0 0;font-weight:600' }, bilan) : null,
+    ]);
+  }
+
   /* ---------------- tableau de bord ---------------- */
 
   render() {
@@ -210,7 +297,7 @@ class DevPanel {
 
     // Clients connectés — c'est le tableau que tu voulais.
     const tClients = h('table', {}, [
-      h('thead', {}, h('tr', {}, ['Joueur', 'Adresse IP', 'Statut', 'Salon', 'Ping', 'Transport', 'Navigateur', 'Connecté depuis', 'Msg', 'Socket']
+      h('thead', {}, h('tr', {}, ['Joueur', 'Adresse IP', 'Statut', 'Salon', 'Ping', 'Transport', 'Navigateur', 'Connecté depuis', 'Msg', 'Socket', '']
         .map((t) => h('th', {}, t)))),
       h('tbody', {}, s.clients.map((c) => h('tr', {}, [
         h('td', {}, [
@@ -229,6 +316,11 @@ class DevPanel {
         h('td', {}, duree(c.anciennete)),
         h('td', {}, String(c.messages)),
         h('td', { className: 'mono', style: 'color:#667' }, c.socketId.slice(0, 8)),
+        h('td', {}, h('button', {
+          className: 'btn btn--ghost dev__diagbtn',
+          disabled: this.diag?.enCours && this.diag.socketId === c.socketId,
+          onClick: () => this.lancerDiag(c.socketId, c.pseudo ?? 'sans pseudo'),
+        }, this.diag?.enCours && this.diag.socketId === c.socketId ? '… en cours' : '🩺 Diagnostiquer')),
       ]))),
     ]);
 
@@ -250,7 +342,10 @@ class DevPanel {
       return box;
     };
 
-    this.root.replaceChildren(
+    // replaceChildren() rejette tout argument qui n'est ni un Node ni une chaîne —
+    // diagPanel() renvoie `null` tant qu'aucun diagnostic n'a été lancé, donc on
+    // filtre avant de dérouler la liste (un `null` direct ferait planter le rendu).
+    const sections = [
       h('div', { className: 'dev__top' }, [
         h('h2', {}, 'Espace programmeur'),
         h('span', { className: 'dev__tag' }, 'accès restreint'),
@@ -263,6 +358,7 @@ class DevPanel {
         h('h3', {}, `Clients connectés (${s.clients.length})`),
         tClients,
       ]),
+      this.diagPanel(),
       h('div', { className: 'dev__panel' }, [h('h3', {}, `Salons (${s.salons.length})`), tSalons]),
       h('div', { className: 'dev__panel' }, [
         h('h3', {}, 'Historique (3 min)'),
@@ -275,7 +371,8 @@ class DevPanel {
       ]),
       h('p', { style: 'color:#667;font-size:.78rem' },
         'Propriétaire : Emmanuel BAILLY    Coprogrammeurs : Nathan GALLINIER et Jérémie PRESUTTO.'),
-    );
+    ];
+    this.root.replaceChildren(...sections.filter((n) => n !== null));
   }
 }
 

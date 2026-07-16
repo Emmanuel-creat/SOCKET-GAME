@@ -51,4 +51,18 @@ export const EVENTS = Object.freeze({
   ADMIN_AUTHED: 'admin:authed', // serveur -> client : { ok, error? }
   ADMIN_STATS: 'admin:stats', // serveur -> admin : { serveur, capacite, reseau, clients, salons, historique }
   ADMIN_LEAVE: 'admin:leave', // client -> serveur : fin de la supervision
+
+  // --- Diagnostic réseau (page programmeur) ---
+  // Un admin choisit un client dans le tableau et lance une batterie de tests
+  // CONTRE CE CLIENT PRÉCIS (pas contre lui-même) : répondant, RTT/gigue, débit,
+  // intégrité de charge utile, et — le test qui compte pour La Traque — le
+  // relais réel `game:message` (mêmes vérifications serveur qu'une commande en
+  // partie : salon IN_GAME, destinataire trouvé).
+  DIAG_RUN: 'diag:run', // admin -> serveur : { targetSocketId }
+  DIAG_PROGRESS: 'diag:progress', // serveur -> admin : { etape, ok, detail } (au fil de l'eau)
+  DIAG_RESULT: 'diag:result', // serveur -> admin : rapport complet, ou { erreur }
+  DIAG_PING: 'diag:ping', // serveur -> client ciblé : { id, seq, sentAt, payload? }
+  DIAG_PONG: 'diag:pong', // client -> serveur : renvoie {id, seq, sentAt, payload?} tel quel
+  DIAG_ECHO_REQUEST: 'diag:echoRequest', // serveur -> client ciblé : { id, count, paceMs }
+  DIAG_ECHO_REPORT: 'diag:echoReport', // client ciblé -> serveur : { id, recus, moy }
 });

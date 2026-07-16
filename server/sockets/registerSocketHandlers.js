@@ -7,7 +7,7 @@ import { EVENTS } from '../../shared/events.js';
 import { GAME_STATE, LIMITS, ROOM_STATUS } from '../../shared/constants.js';
 import { sanitizeText, isValidChatMessage } from '../../shared/validation.js';
 
-export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRegistry, admin = null }) {
+export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRegistry, admin = null, diagnostics = null }) {
   /** Raccourci : émet une erreur normalisée au client courant. */
   const fail = (code, message) => socket.emit(EVENTS.SYS_ERROR, { code, message });
 
@@ -23,6 +23,13 @@ export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRe
       if (res.ok) socket.emit(EVENTS.ADMIN_STATS, admin.stats());
     });
     socket.on(EVENTS.ADMIN_LEAVE, () => admin.quitter(socket.id));
+
+    // Diagnostic réseau contre un client ciblé — réservé aux admins authentifiés
+    // (même vérification que le reste de la page programmeur : côté serveur).
+    socket.on(EVENTS.DIAG_RUN, ({ targetSocketId } = {}) => {
+      if (!admin.estAdmin(socket.id)) return fail('NOT_ADMIN', 'Accès refusé.');
+      diagnostics?.lancer(socket, targetSocketId);
+    });
   }
 
   /** Raccourci : notification personnelle. */
