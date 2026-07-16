@@ -116,7 +116,14 @@ class BombermanUI {
         if (from !== this.hostId) return;
         if (data?.t === 'state') this.render(data.state);
       });
-      this.arena.append(h('div', { className: 'bm__overlay' }, '⏳ Connexion à l\'arène…'));
+      // L'écran d'attente vit dans this.overlay : c'est LA référence que renderOverlay()
+      // retire à chaque état reçu. Avant, cet élément était ajouté « orphelin » (sans
+      // référence) : les états arrivaient, la carte se dessinait DERRIÈRE, mais rien ne
+      // retirait jamais l'écran « Connexion à l'arène » — l'invité restait devant un
+      // voile flou avec le HUD à jour au-dessus. Une manche 2 parfaitement jouable,
+      // cachée derrière un rideau qu'on avait oublié de lever.
+      this.overlay = h('div', { className: 'bm__overlay' }, '⏳ Connexion à l\'arène…');
+      this.arena.append(this.overlay);
       // Abonné : on annonce au Host qu'on est prêt. Il nous renvoie l'état de l'arène,
       // même s'il a déjà fait sa première (et parfois unique) diffusion.
       this.ctx.sendMessage({ t: 'hello' }, this.hostId);
