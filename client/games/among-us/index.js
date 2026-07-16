@@ -150,6 +150,9 @@ class AmongUI {
         return;
       }
       this.unsub = this.ctx.onMessage(({ from, data }) => {
+        // Un invité vient de finir de monter et annonce qu'il est prêt : on oublie ce
+        // qu'on croyait lui avoir envoyé, sa prochaine vue sera COMPLÈTE (carte + roster).
+        if (data?.t === 'hello') { this.syncMap.delete(from); this.broadcast(); return; }
         if (data?.t !== 'action') return;
         const res = this.engine.handleAction(from, data.action);
         if (!res?.ok && res?.error && data.action.a !== 'input') {
@@ -163,6 +166,8 @@ class AmongUI {
         if (data?.t === 'view') this.receive(data.view);
         else if (data?.t === 'error') this.status(data.message);
       });
+      // Abonné : on annonce au Host qu'on est prêt à recevoir un état complet.
+      this.ctx.sendMessage({ t: 'hello' }, this.hostId);
     }
 
     this.onKeyDown = (e) => {

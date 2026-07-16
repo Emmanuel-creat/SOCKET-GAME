@@ -103,6 +103,11 @@ class BombermanUI {
       }
       this.unsubscribe = this.ctx.onMessage(({ from, data }) => {
         if (data?.t === 'action') this.engine.handleAction(from, data.action);
+        // Un invité vient de finir de monter et annonce qu'il est prêt. Bomberman ne
+        // diffuse que quand l'arène change ; sans ça, un invité qui rate la première
+        // diffusion reste bloqué à vie sur « Connexion à l'arène ». On lui renvoie
+        // l'état courant, tout de suite et rien qu'à lui.
+        else if (data?.t === 'hello') this.ctx.sendMessage({ t: 'state', state: this.engine.getState() }, from);
       });
       this.engine.startRound();
       this.timers.loop = setInterval(() => this.hostLoop(), TICK_MS);
@@ -112,6 +117,9 @@ class BombermanUI {
         if (data?.t === 'state') this.render(data.state);
       });
       this.arena.append(h('div', { className: 'bm__overlay' }, '⏳ Connexion à l\'arène…'));
+      // Abonné : on annonce au Host qu'on est prêt. Il nous renvoie l'état de l'arène,
+      // même s'il a déjà fait sa première (et parfois unique) diffusion.
+      this.ctx.sendMessage({ t: 'hello' }, this.hostId);
     }
   }
 

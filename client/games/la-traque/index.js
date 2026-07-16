@@ -147,6 +147,11 @@ class TraqueUI {
         return;
       }
       this.unsub = this.ctx.onMessage(({ from, data }) => {
+        // Un invité vient de finir de monter son module et annonce qu'il est prêt.
+        // On oublie ce qu'on croyait lui avoir envoyé : sa prochaine vue sera COMPLÈTE
+        // (carte + roster). Sans ça, un invité qui s'abonne après notre première vue
+        // ne reçoit que du différentiel — des positions sans carte, joueurs « dans le vide ».
+        if (data?.t === 'hello') { this.syncMap.delete(from); this.broadcast(); return; }
         if (data?.t !== 'action') return;
         const res = this.engine.handleAction(from, data.action);
         if (!res?.ok && res?.error && data.action.a !== 'input') {
@@ -160,6 +165,9 @@ class TraqueUI {
         if (data?.t === 'view') this.receive(data.view);
         else if (data?.t === 'error') this.status(data.message);
       });
+      // On est abonné : on annonce au Host qu'on est prêt à recevoir. Il nous renverra
+      // un état complet, même s'il diffusait déjà avant qu'on ait fini de monter.
+      this.ctx.sendMessage({ t: 'hello' }, this.hostId);
     }
 
     if (this.skin) this.act({ a: 'skin', skin: this.skin });
