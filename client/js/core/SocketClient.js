@@ -10,18 +10,7 @@ import { store } from './Store.js';
 export class SocketClient {
   constructor() {
     /* global io */
-    // WebSocket EN PREMIER. Par défaut Socket.IO démarre en polling (une requête
-    // HTTP par message !) puis tente une bascule. Un invité resté en polling
-    // sature à lui seul un serveur à 0,1 CPU. Si le WebSocket est bloqué par le
-    // réseau, on retombe sur le mode par défaut.
-    this.socket = io({ transports: ['websocket'], upgrade: false });
-    this.socket.on('connect_error', () => {
-      if (this.secours || this.socket.connected) return;
-      this.secours = true;
-      this.socket.io.opts.transports = ['polling', 'websocket'];
-      this.socket.io.opts.upgrade = true;
-    });
-    this.diagEcho = null; // écho de diagnostic en cours (un seul à la fois)
+    this.socket = io();
     this.bindIncoming();
   }
 
@@ -70,32 +59,7 @@ export class SocketClient {
     });
 
     // Données de jeu relayées pendant une partie (le module de jeu s'y abonne).
-    // Exception : les paquets `t:'diag'` sont interceptés ICI, avant tout module
-    // de jeu — aucun module ne les reconnaît (ils utilisent 'action'/'view'/
-    // 'error'), c'est uniquement le retour de l'écho de diagnostic déclenché
-    // par diag:echoRequest ci-dessous.
-    s.on(EVENTS.GAME_MESSAGE, ({ from, data }) => {
-      if (data?.t === 'diag') { this.onDiagPacket(from, data); return; }
-      bus.emit('game:message', { from, data });
-    });
-
-    // --- Diagnostic réseau (page programmeur) ---
-    // TOUT client répond à ceci, admin ou non : c'est lui qu'on peut tester
-    // depuis le tableau des clients connectés, pas seulement l'admin lui-même.
-    s.on(EVENTS.DIAG_PING, ({ id, seq, sentAt, payload }) => {
-      s.emit(EVENTS.DIAG_PONG, { id, seq, sentAt, payload });
-    });
-    s.on(EVENTS.DIAG_ECHO_REQUEST, ({ id, count, paceMs, to }) => this.runDiagEcho(id, count, paceMs, to));
-
-    s.on(EVENTS.DIAG_PROGRESS, (p) => bus.emit('diag:progress', p));
-    s.on(EVENTS.DIAG_RESULT, (r) => bus.emit('diag:result', r));
-
-    // Mesure de latence : on renvoie l'horodatage tel quel, le serveur fait le calcul.
-    s.on(EVENTS.SYS_PING, ({ t }) => s.emit(EVENTS.SYS_PONG, { t }));
-
-    // Supervision (page programmeur).
-    s.on(EVENTS.ADMIN_AUTHED, (res) => bus.emit('admin:authed', res));
-    s.on(EVENTS.ADMIN_STATS, (stats) => bus.emit('admin:stats', stats));
+    s.on(EVENTS.GAME_MESSAGE, ({ from, data }) => bus.emit('game:message', { from, data }));
 
     s.on(EVENTS.SYS_NOTIFICATION, ({ type, message }) => bus.emit('notify', { type, message }));
     s.on(EVENTS.SYS_ERROR, ({ message }) => bus.emit('notify', { type: 'error', message }));
@@ -103,72 +67,7 @@ export class SocketClient {
     s.on('disconnect', () => bus.emit('notify', { type: 'error', message: 'Connexion au serveur perdue.' }));
   }
 
-  /**
-   * Répond à diag:echoRequest en envoyant `count` paquets réels via
-   * sendGameMessage — la MÊME méthode que toute commande de jeu, aucune
-   * copie. Vers `to` si fourni (test croisé, ex. invité → Host), sinon vers
-   * soi-même (référence de base). `origine` permet à la contrepartie de
-   * savoir à qui renvoyer le paquet (voir onDiagPacket).
-   */
-  runDiagEcho(id, count, paceMs, to) {
-    const me = store.get('me');
-    if (!me) { this.socket.emit(EVENTS.DIAG_ECHO_REPORT, { id, recus: 0, moy: null }); return; }
-    const cible = to || me.id;
-
-    const attendus = new Map();
-    this.diagEcho = { id, attendus };
-
-    let i = 0;
-    const envoyer = () => {
-      if (i >= count) {
-        setTimeout(() => this.finDiagEcho(id), Math.max(1500, paceMs * 4));
-        return;
-      }
-      const seq = i;
-      i += 1;
-      attendus.set(seq, { sentAt: Date.now(), recuAt: null });
-      this.sendGameMessage({ t: 'diag', id, seq, sentAt: Date.now(), origine: me.id }, cible);
-      setTimeout(envoyer, paceMs);
-    };
-    envoyer();
-  }
-
-  /**
-   * Reçoit un paquet t:'diag' — pointé depuis bindIncoming(). Deux cas :
-   *  - c'est un paquet QUE J'AI ENVOYÉ qui revient (origine === mon id) :
-   *    je le comptabilise dans mon écho en cours.
-   *  - c'est le paquet de quelqu'un d'autre (test croisé) : je le renvoie
-   *    tel quel à son expéditeur, sans y toucher — c'est ce renvoi qui
-   *    exerce le relais dans les DEUX sens, comme une vraie commande.
-   */
-  onDiagPacket(from, data) {
-    const me = store.get('me');
-    if (me && data?.origine === me.id) { this.onDiagEcho(data); return; }
-    this.sendGameMessage(data, from);
-  }
-
-  /** Comptabilise un paquet d'écho revenu (appelé uniquement pour mes propres paquets). */
-  onDiagEcho(data) {
-    if (!this.diagEcho || data?.id !== this.diagEcho.id) return;
-    const e = this.diagEcho.attendus.get(data.seq);
-    if (e && e.recuAt === null) e.recuAt = Date.now();
-  }
-
-  finDiagEcho(id) {
-    if (!this.diagEcho || this.diagEcho.id !== id) return;
-    const vals = [...this.diagEcho.attendus.values()];
-    const recus = vals.filter((v) => v.recuAt !== null);
-    const moy = recus.length ? Math.round(recus.reduce((s, v) => s + (v.recuAt - v.sentAt), 0) / recus.length) : null;
-    this.socket.emit(EVENTS.DIAG_ECHO_REPORT, { id, recus: recus.length, moy });
-    this.diagEcho = null;
-  }
-
   // --- API sortante (une méthode par intention utilisateur) ---
-
-  adminAuth(code) { this.socket.emit(EVENTS.ADMIN_AUTH, { code }); }
-  adminLeave() { this.socket.emit(EVENTS.ADMIN_LEAVE); }
-  /** Lance la batterie de diagnostic contre un client précis (page programmeur). */
-  runDiagnostic(targetSocketId) { this.socket.emit(EVENTS.DIAG_RUN, { targetSocketId }); }
 
   register(profile) { this.socket.emit(EVENTS.USER_REGISTER, profile); }
   updateProfile(profile) { this.socket.emit(EVENTS.USER_UPDATE_PROFILE, profile); }

@@ -7,30 +7,9 @@ import { EVENTS } from '../../shared/events.js';
 import { GAME_STATE, LIMITS, ROOM_STATUS } from '../../shared/constants.js';
 import { sanitizeText, isValidChatMessage } from '../../shared/validation.js';
 
-export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRegistry, admin = null, diagnostics = null }) {
+export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRegistry }) {
   /** Raccourci : émet une erreur normalisée au client courant. */
   const fail = (code, message) => socket.emit(EVENTS.SYS_ERROR, { code, message });
-
-  // --- Supervision : compteur de messages et mesure de latence ---
-  if (admin) {
-    socket.onAny(() => admin.onMessage(socket.id));
-    socket.on(EVENTS.SYS_PONG, (payload) => admin.onPong(socket, payload));
-
-    // Page programmeur : le code est vérifié SERVEUR, avec limitation par IP.
-    socket.on(EVENTS.ADMIN_AUTH, ({ code } = {}) => {
-      const res = admin.auth(socket, code);
-      socket.emit(EVENTS.ADMIN_AUTHED, res);
-      if (res.ok) socket.emit(EVENTS.ADMIN_STATS, admin.stats());
-    });
-    socket.on(EVENTS.ADMIN_LEAVE, () => admin.quitter(socket.id));
-
-    // Diagnostic réseau contre un client ciblé — réservé aux admins authentifiés
-    // (même vérification que le reste de la page programmeur : côté serveur).
-    socket.on(EVENTS.DIAG_RUN, ({ targetSocketId } = {}) => {
-      if (!admin.estAdmin(socket.id)) return fail('NOT_ADMIN', 'Accès refusé.');
-      diagnostics?.lancer(socket, targetSocketId);
-    });
-  }
 
   /** Raccourci : notification personnelle. */
   const notify = (type, message) => socket.emit(EVENTS.SYS_NOTIFICATION, { type, message });
@@ -96,18 +75,9 @@ export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRe
     const { room, error } = rooms.create(user, payload);
     if (error) return fail('ROOM_CREATE_FAILED', error);
 
-    // Jeu présélectionné (flux « Jouer » → carte d'un jeu) : associé dès la
-    // création, même validation que room:setGame. Un id invalide est ignoré
-    // sans faire échouer la création.
-    if (payload.gameId) {
-      const sel = gameRegistry.canSelect(payload.gameId, room.players.length);
-      if (sel.ok) room.gameId = payload.gameId;
-    }
-
     socket.join(room.id);
     socket.emit(EVENTS.ROOM_JOINED, { room: room.toPublic((u) => users.toPublic(u)) });
-    const game = room.gameId ? gameRegistry.get(room.gameId) : null;
-    notify('success', `Salon « ${room.name} » créé${game ? ` pour ${game.nom}` : ''}. Code : ${room.code}`);
+    notify('success', `Salon « ${room.name} » créé. Code : ${room.code}`);
     lobby.broadcastRooms();
     lobby.broadcastPlayers();
   });
@@ -213,7 +183,6 @@ export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRe
   // ------------------------------------------------------------------
 
   socket.on(EVENTS.GAME_START, () => {
-    admin?.onGameStart();
     const user = requireUser();
     const room = user && requireRoom(user, { hostOnly: true });
     if (!room) return;
@@ -279,7 +248,6 @@ export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRe
   // ------------------------------------------------------------------
 
   socket.on('disconnect', () => {
-    admin?.onDisconnect(socket);
     const user = users.get(socket.id);
     if (!user) return;
     leaveCurrentRoom(null);

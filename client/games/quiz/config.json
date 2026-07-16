@@ -1,0 +1,34 @@
+{
+  "id": "quiz",
+  "nom": "Quiz",
+  "version": "1.0.0",
+  "joueurs": { "min": 2, "max": 16 },
+  "architecture": "host-autoritaire",
+  "communication": "game:message (relais générique du moteur)",
+  "banqueDeQuestions": {
+    "fichier": "questions.js",
+    "total": 2394,
+    "parCategorie": {
+      "Mathématiques": 700,
+      "Capitales": 278,
+      "Drapeaux": 278,
+      "Sciences": 200,
+      "Culture générale": 199,
+      "Géographie": 198,
+      "Mythologie": 66,
+      "Histoire": 60,
+      "Cinéma": 60,
+      "Sport": 60,
+      "Nature & Animaux": 59,
+      "Musique": 59,
+      "Littérature": 59,
+      "Jeux vidéo & Séries": 59,
+      "Informatique": 59
+    }
+  },
+  "regles": {
+    "nombreDeQuestions": [5, 10, 15, 20, 30],
+    "dureeParQuestionSecondes": [10, 15, 20, 30],
+    "points": "0 si faux ou pas de réponse ; sinon 300 à 1000 selon la rapidité de réponse"
+  }
+}
