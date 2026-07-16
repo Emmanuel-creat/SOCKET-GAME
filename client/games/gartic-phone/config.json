@@ -1,0 +1,22 @@
+{
+  "id": "gartic-phone",
+  "nom": "Gartic Phone",
+  "version": "1.0.0",
+  "joueurs": { "min": 3, "max": 16 },
+  "architecture": "host-autoritaire",
+  "communication": "game:message (sendMessage(data, to=null) = diffusion salon)",
+  "regles": {
+    "phases": ["write (3 min)", "draw (3 min)", "describe (3 min)", "album"],
+    "rotation": "chaînes circulaires par slot : le joueur i traite la chaîne (i - k) mod N, jamais son propre contenu",
+    "fini": "verrouille l'entrée ; si tous cliquent FINI avant 0:00, passage immédiat à la phase suivante",
+    "timeout": "à 0:00, auto-soumission du contenu à l'écran puis passage",
+    "dessin": {
+      "brosses": ["S", "M", "L"], "gomme": true, "annuler": "historique de traits",
+      "couleurs": ["rouge", "orange", "jaune", "vert", "bleu", "rose", "violet", "marron", "noir", "blanc"],
+      "sync": "canvas exporté en base64 (JPEG réduit) pour un payload léger"
+    },
+    "album": "diaporama piloté par le Host, révélé simultanément à tous",
+    "resilience": "migration de Host (snapshot ciblé à l'héritier), chat persistant indépendant",
+    "rejouer": "bouton Host de réinitialisation (le chat est conservé)"
+  }
+}
