@@ -212,18 +212,18 @@
       "visible": true
     },
     {
-      "id": "dessin-devine",
+      "id": "gartic-phone",
       "nom": "Dessin & Devine",
       "description": "Dessinez le mot imposé pendant que les autres tentent de le deviner.",
       "icone": "🎨",
       "image": "/games/dessin-devine/assets/cover.png",
       "joueursMin": 3,
       "joueursMax": 12,
-      "etat": "en-developpement",
+      "etat": "disponible",
       "version": "0.0.0",
-      "auteur": "Manu",
+      "auteur": "Nathan",
       "module": "index.js",
-      "chemin": "/games/dessin-devine/",
+      "chemin": "/games/gartic-phone/",
       "visible": true
     },
     {
@@ -332,18 +332,18 @@
       "visible": true
     },
     {
-      "id": "gartic-phone",
+      "id": "gemplacement",
       "nom": "The phone",
-      "description": "Les imagination de Nathan sont sans limites ATTENTION.",
+      "description": "Les imaginations de Nathan sont sans limites ATTENTION.",
       "icone": "📦",
       "image": "/games/placeholder03/assets/cover.png",
       "joueursMin": 2,
       "joueursMax": 16,
-      "etat": "disponible",
+      "etat": "en-developpement",
       "version": "1.0.0",
       "auteur": "Nathan",
       "module": "index.js",
-      "chemin": "/games/gartic-phone/",
+      "chemin": "/games/placeholder03/",
       "visible": true
     },
     {
