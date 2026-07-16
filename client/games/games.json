@@ -332,19 +332,19 @@
       "visible": true
     },
     {
-      "id": "placeholder03",
-      "nom": "Placeholder 03",
-      "description": "Emplacement réservé pour un futur jeu.",
+      "id": "gartic-phone",
+      "nom": "The phone",
+      "description": "Les imagination de Nathan sont sans limites ATTENTION.",
       "icone": "📦",
       "image": "/games/placeholder03/assets/cover.png",
       "joueursMin": 2,
       "joueursMax": 16,
-      "etat": "en-developpement",
-      "version": "0.0.0",
-      "auteur": "Manu",
+      "etat": "disponible",
+      "version": "1.0.0",
+      "auteur": "Nathan",
       "module": "index.js",
-      "chemin": "/games/placeholder03/",
-      "visible": false
+      "chemin": "/games/gartic-phone/",
+      "visible": true
     },
     {
       "id": "placeholder04",
