@@ -152,6 +152,8 @@ export class AdminService {
 
   estAdmin(socketId) { return this.admins.has(socketId); }
   quitter(socketId) { this.admins.delete(socketId); }
+  /** Info brute collectée pour un client (IP, agent, transport, messages…) — pour réutilisation (ex. diagnostic). */
+  client(socketId) { return this.clients.get(socketId) ?? null; }
 
   /* ------------------------- métriques ------------------------- */
 

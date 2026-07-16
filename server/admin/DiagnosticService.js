@@ -60,10 +60,12 @@ function idAleatoire() {
 }
 
 export class DiagnosticService {
-  constructor({ io, users, rooms }) {
+  constructor({ io, users, rooms, gameRegistry = null, admin = null }) {
     this.io = io;
     this.users = users;
     this.rooms = rooms;
+    this.gameRegistry = gameRegistry;
+    this.admin = admin;
     this.enCours = new Set(); // socketId cible : un seul diagnostic à la fois par client
   }
 
@@ -82,7 +84,7 @@ export class DiagnosticService {
     if (this.enCours.has(targetSocketId)) return rater('Un diagnostic est déjà en cours pour ce client.');
 
     this.enCours.add(targetSocketId);
-    const rapport = { pseudo: user.pseudo, socketId: targetSocketId, debut: Date.now(), etapes: [] };
+    const rapport = { pseudo: user.pseudo, socketId: targetSocketId, debut: Date.now(), identite: this.ficheIdentite(user, targetSocketId), etapes: [] };
     const noter = (nom, ok, detail) => {
       rapport.etapes.push({ nom, ok, detail });
       progres(nom, ok, detail);
@@ -165,25 +167,38 @@ export class DiagnosticService {
         );
       }
 
-      // 6) Relais réel game:message — seulement si le client est actuellement en partie
+      // 6) Relais réel game:message — seulement si le client est actuellement en partie.
+      // Deux temps : d'abord vers SOI-MÊME (référence de base — le canal fonctionne-t-il
+      // seulement ?), puis vers la CONTREPARTIE réelle (Host si c'est un invité, un invité
+      // au hasard si c'est le Host) — c'est ce deuxième test qui reproduit exactement le
+      // trajet d'une commande de La Traque (invité → Host).
       const room = user.roomId ? this.rooms.get(user.roomId) : null;
       if (!room || room.status !== ROOM_STATUS.IN_GAME) {
-        noter('Relais en partie (game:message)', null, 'non applicable — ce client n\'est pas en partie en ce moment');
+        noter('Relais — auto (soi-même)', null, 'non applicable — ce client n\'est pas en partie en ce moment');
+        noter('Relais — vers la contrepartie', null, 'non applicable — ce client n\'est pas en partie en ce moment');
       } else {
-        progres('Relais en partie (game:message)', null, `${ECHO_N} paquets via le relais réel du jeu…`);
-        const echo = await this.echoRelais(cible, ECHO_N, ECHO_PACE_MS, ECHO_TIMEOUT_MS);
-        if (echo.timeout && echo.recus === 0) {
-          noter(
-            'Relais en partie (game:message)',
-            false,
-            'AUCUN paquet revenu — le relais game:message ne fonctionne pas pour ce client en ce moment (salon plus IN_GAME, identifiant obsolète, ou transport bloqué)',
-          );
+        progres('Relais — auto (soi-même)', null, `${ECHO_N} paquets, aller-retour avec soi-même…`);
+        const echoAuto = await this.echoRelais(cible, ECHO_N, ECHO_PACE_MS, ECHO_TIMEOUT_MS, user.id);
+        this.noterEcho(noter, 'Relais — auto (soi-même)', echoAuto, 'ce client ne reçoit même pas ses propres paquets — le canal de base est cassé pour lui, indépendamment de qui que ce soit d\'autre');
+
+        const contrepartie = room.isHost(user.id)
+          ? room.players.find((p) => p.id !== user.id) // un invité, au hasard
+          : room.players.find((p) => p.id === room.hostId); // le Host
+
+        if (!contrepartie) {
+          noter('Relais — vers la contrepartie', null, 'non applicable — aucun autre joueur dans ce salon pour tester un aller-retour croisé');
         } else {
-          const perteEcho = Math.round((1 - echo.recus / ECHO_N) * 100);
-          noter(
-            'Relais en partie (game:message)',
-            perteEcho < 5,
-            `${echo.recus}/${ECHO_N} paquets revenus par le relais réel (${perteEcho}% perte) · latence moyenne ${echo.moy ?? '—'} ms`,
+          const role = room.isHost(contrepartie.id) ? 'Host' : 'invité';
+          const nom = `Relais — vers ${contrepartie.pseudo} (${role})`;
+          progres(nom, null, `${ECHO_N} paquets réels, ${user.pseudo} → ${contrepartie.pseudo} → retour…`);
+          const echoCroise = await this.echoRelais(cible, ECHO_N, ECHO_PACE_MS, ECHO_TIMEOUT_MS, contrepartie.id);
+          this.noterEcho(
+            noter,
+            nom,
+            echoCroise,
+            `AUCUN paquet n'a fait l'aller-retour par ${contrepartie.pseudo} — c'est EXACTEMENT le trajet d'une commande de jeu réelle. `
+            + `Si le test « auto » juste au-dessus est vert, le problème n'est pas ce client : c'est soit ${contrepartie.pseudo} qui ne relaie pas `
+            + '(navigateur pas à jour, page fermée, JS non chargé), soit le salon qui les considère différemment l\'un de l\'autre.',
           );
         }
       }
@@ -193,6 +208,35 @@ export class DiagnosticService {
     } catch (e) {
       this.enCours.delete(targetSocketId);
       rater(`Diagnostic interrompu par une erreur : ${e.message}`);
+    }
+  }
+
+  /** Fiche d'identité complète : qui, quel jeu, quel rôle, quel salon, quel réseau. */
+  ficheIdentite(user, socketId) {
+    const info = this.admin?.client(socketId) ?? null;
+    const room = user.roomId ? this.rooms.get(user.roomId) : null;
+    const jeu = room?.gameId ? this.gameRegistry?.get(room.gameId) : null;
+    return {
+      pseudo: user.pseudo,
+      statut: user.status,
+      ip: info?.ip ?? '—',
+      navigateur: info ? `${info.agent.nav} · ${info.agent.os}${info.agent.mobile ? ' (mobile)' : ''}` : '—',
+      transport: info?.transport ?? '—',
+      connecteDepuis: info ? Math.round((Date.now() - info.depuis) / 1000) : null,
+      messagesEchanges: info?.messages ?? null,
+      salon: room ? { nom: room.name, code: room.code, statut: room.status, joueurs: room.players.length, capacite: room.maxPlayers } : null,
+      role: room ? (room.isHost(user.id) ? 'Host' : 'Invité') : null,
+      jeu: jeu ? { id: jeu.id, nom: jeu.nom, etat: jeu.etat, joueursMax: jeu.joueursMax } : (room?.gameId ? { id: room.gameId, nom: room.gameId, etat: '?' } : null),
+    };
+  }
+
+  /** Traduit un résultat d'écho relais en ligne de rapport, avec un message d'échec explicite fourni par l'appelant. */
+  noterEcho(noter, nom, echo, detailEchecPersonnalise) {
+    if (echo.timeout && echo.recus === 0) {
+      noter(nom, false, detailEchecPersonnalise);
+    } else {
+      const perte = Math.round((1 - echo.recus / echo.attendu) * 100);
+      noter(nom, perte < 5, `${echo.recus}/${echo.attendu} paquets revenus (${perte}% perte) · latence moyenne ${echo.moy ?? '—'} ms`);
     }
   }
 
@@ -268,13 +312,14 @@ export class DiagnosticService {
   }
 
   /**
-   * LE test qui compte : demande au client de s'envoyer À LUI-MÊME `count`
-   * paquets réels via `sendGameMessage` (même fonction que toutes les
-   * commandes de jeu), et attend son propre bilan. Le serveur ne fait ici
-   * QUE lancer la demande et récupérer le rapport — le relais lui-même est
-   * le relais `GAME_MESSAGE` de production, inchangé, sans raccourci.
+   * LE test qui compte : demande au client d'envoyer `count` paquets réels via
+   * `sendGameMessage` vers `to` (lui-même, ou une contrepartie réelle), et
+   * attend son propre bilan. Si `to` est quelqu'un d'autre, ce quelqu'un
+   * d'autre doit relayer le paquet vers son expéditeur (voir `onDiagPacket`
+   * côté client) — c'est ce qui permet de tester un aller-retour croisé sans
+   * que le serveur ait besoin d'orchestrer les deux bouts.
    */
-  echoRelais(cible, count, paceMs, timeoutMs) {
+  echoRelais(cible, count, paceMs, timeoutMs, to) {
     return new Promise((resolve) => {
       const id = idAleatoire();
       let fini = false;
@@ -283,16 +328,16 @@ export class DiagnosticService {
         if (fini || data?.id !== id) return;
         fini = true;
         cible.off(EVENTS.DIAG_ECHO_REPORT, onReport);
-        resolve({ recus: data.recus ?? 0, moy: data.moy ?? null, timeout: false });
+        resolve({ recus: data.recus ?? 0, moy: data.moy ?? null, attendu: count, timeout: false });
       };
       cible.on(EVENTS.DIAG_ECHO_REPORT, onReport);
-      cible.emit(EVENTS.DIAG_ECHO_REQUEST, { id, count, paceMs });
+      cible.emit(EVENTS.DIAG_ECHO_REQUEST, { id, count, paceMs, to });
 
       setTimeout(() => {
         if (fini) return;
         fini = true;
         cible.off(EVENTS.DIAG_ECHO_REPORT, onReport);
-        resolve({ recus: 0, moy: null, timeout: true });
+        resolve({ recus: 0, moy: null, attendu: count, timeout: true });
       }, timeoutMs);
     });
   }

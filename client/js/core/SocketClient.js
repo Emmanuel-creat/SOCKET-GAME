@@ -75,7 +75,7 @@ export class SocketClient {
     // 'error'), c'est uniquement le retour de l'écho de diagnostic déclenché
     // par diag:echoRequest ci-dessous.
     s.on(EVENTS.GAME_MESSAGE, ({ from, data }) => {
-      if (data?.t === 'diag') { this.onDiagEcho(data); return; }
+      if (data?.t === 'diag') { this.onDiagPacket(from, data); return; }
       bus.emit('game:message', { from, data });
     });
 
@@ -85,7 +85,7 @@ export class SocketClient {
     s.on(EVENTS.DIAG_PING, ({ id, seq, sentAt, payload }) => {
       s.emit(EVENTS.DIAG_PONG, { id, seq, sentAt, payload });
     });
-    s.on(EVENTS.DIAG_ECHO_REQUEST, ({ id, count, paceMs }) => this.runDiagEcho(id, count, paceMs));
+    s.on(EVENTS.DIAG_ECHO_REQUEST, ({ id, count, paceMs, to }) => this.runDiagEcho(id, count, paceMs, to));
 
     s.on(EVENTS.DIAG_PROGRESS, (p) => bus.emit('diag:progress', p));
     s.on(EVENTS.DIAG_RESULT, (r) => bus.emit('diag:result', r));
@@ -104,14 +104,16 @@ export class SocketClient {
   }
 
   /**
-   * Répond à diag:echoRequest en s'envoyant À SOI-MÊME `count` paquets réels
-   * via sendGameMessage — la MÊME méthode que toute commande de jeu, aucune
-   * copie. Ça exerce exactement le relais que La Traque emprunte (salon
-   * IN_GAME, destinataire trouvé), sans dépendre d'un deuxième joueur.
+   * Répond à diag:echoRequest en envoyant `count` paquets réels via
+   * sendGameMessage — la MÊME méthode que toute commande de jeu, aucune
+   * copie. Vers `to` si fourni (test croisé, ex. invité → Host), sinon vers
+   * soi-même (référence de base). `origine` permet à la contrepartie de
+   * savoir à qui renvoyer le paquet (voir onDiagPacket).
    */
-  runDiagEcho(id, count, paceMs) {
+  runDiagEcho(id, count, paceMs, to) {
     const me = store.get('me');
     if (!me) { this.socket.emit(EVENTS.DIAG_ECHO_REPORT, { id, recus: 0, moy: null }); return; }
+    const cible = to || me.id;
 
     const attendus = new Map();
     this.diagEcho = { id, attendus };
@@ -125,13 +127,27 @@ export class SocketClient {
       const seq = i;
       i += 1;
       attendus.set(seq, { sentAt: Date.now(), recuAt: null });
-      this.sendGameMessage({ t: 'diag', id, seq, sentAt: Date.now() }, me.id);
+      this.sendGameMessage({ t: 'diag', id, seq, sentAt: Date.now(), origine: me.id }, cible);
       setTimeout(envoyer, paceMs);
     };
     envoyer();
   }
 
-  /** Reçoit un paquet diag:'diag' revenu par le relais réel — pointé depuis bindIncoming(). */
+  /**
+   * Reçoit un paquet t:'diag' — pointé depuis bindIncoming(). Deux cas :
+   *  - c'est un paquet QUE J'AI ENVOYÉ qui revient (origine === mon id) :
+   *    je le comptabilise dans mon écho en cours.
+   *  - c'est le paquet de quelqu'un d'autre (test croisé) : je le renvoie
+   *    tel quel à son expéditeur, sans y toucher — c'est ce renvoi qui
+   *    exerce le relais dans les DEUX sens, comme une vraie commande.
+   */
+  onDiagPacket(from, data) {
+    const me = store.get('me');
+    if (me && data?.origine === me.id) { this.onDiagEcho(data); return; }
+    this.sendGameMessage(data, from);
+  }
+
+  /** Comptabilise un paquet d'écho revenu (appelé uniquement pour mes propres paquets). */
   onDiagEcho(data) {
     if (!this.diagEcho || data?.id !== this.diagEcho.id) return;
     const e = this.diagEcho.attendus.get(data.seq);

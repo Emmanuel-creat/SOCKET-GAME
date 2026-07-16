@@ -40,6 +40,7 @@ const CSS = `
 .dev__err { color: #ff6b6b; font-size: .84rem; min-height: 1.2em; text-align: center; }
 .dev__diagbtn { padding: 2px 9px; font-size: .72rem; }
 .dev__diagbox { display: grid; gap: 8px; }
+.dev__diagfiche { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 8px 10px; background: rgba(255,255,255,.04); border-radius: 10px; font-size: .8rem; color: #b8c0d0; }
 .dev__diagtitle { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .dev__diagtitle b { font-size: 1rem; }
 .dev__diagspin { width: 13px; height: 13px; border-radius: 50%; border: 2px solid rgba(255,255,255,.2); border-top-color: #38fedc; animation: dev-spin .8s linear infinite; }
@@ -239,6 +240,16 @@ class DevPanel {
       ]);
     }
 
+    const idt = d.rapport?.identite;
+    const fiche = idt ? h('div', { className: 'dev__diagfiche' }, [
+      idt.jeu ? h('span', {}, `🎮 ${idt.jeu.nom} (${idt.jeu.etat})`) : h('span', {}, '🎮 hors partie'),
+      idt.role ? h('span', {}, `👤 ${idt.role}`) : null,
+      idt.salon ? h('span', {}, `🚪 ${idt.salon.nom} (${idt.salon.code}) · ${idt.salon.joueurs}/${idt.salon.capacite} · ${idt.salon.statut}`) : null,
+      h('span', {}, `🌐 ${idt.navigateur} · ${idt.transport}`),
+      h('span', {}, `📡 ${idt.ip}`),
+      idt.connecteDepuis !== null ? h('span', {}, `⏱️ connecté depuis ${idt.connecteDepuis} s · ${idt.messagesEchanges ?? '—'} messages échangés`) : null,
+    ].filter((n) => n !== null)) : null;
+
     // Étapes affichées : chaque étape passe de « en cours » (ok: undefined) à son
     // résultat final (ok: true/false/null) — on garde la DERNIÈRE mise à jour de
     // chaque nom, dans l'ordre de sa première apparition.
@@ -263,6 +274,7 @@ class DevPanel {
         d.enCours ? h('span', { className: 'dev__diagspin' }) : null,
         h('span', { style: 'color:#778;font-size:.78rem' }, d.enCours ? 'en cours…' : 'terminé'),
       ]),
+      fiche,
       h('div', { className: 'dev__diagbox' }, etapes.map((e) => this.stepRow(e))),
       bilan ? h('p', { style: 'margin:4px 0 0;font-weight:600' }, bilan) : null,
     ]);

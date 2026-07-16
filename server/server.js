@@ -55,7 +55,7 @@ const users = new UserManager();
 const rooms = new RoomManager({ users });
 const lobby = new LobbyManager({ io, users, rooms, gameRegistry });
 const admin = new AdminService({ io, users, rooms, gameRegistry });
-const diagnostics = new DiagnosticService({ io, users, rooms });
+const diagnostics = new DiagnosticService({ io, users, rooms, gameRegistry, admin });
 
 // Rafraîchissement de la page programmeur (uniquement s'il y a quelqu'un derrière).
 setInterval(() => admin.diffuser(), 2000);
