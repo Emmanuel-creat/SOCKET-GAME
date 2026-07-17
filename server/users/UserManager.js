@@ -17,11 +17,15 @@ export class UserManager {
    * Crée un utilisateur pour un socket donné.
    * @returns {object|null} l'utilisateur créé, ou null si profil invalide.
    */
-  register(socketId, { pseudo, avatar, color }) {
+  register(socketId, { pseudo, avatar, color, cid }) {
     if (!isValidPseudo(pseudo)) return null;
     const user = {
       id: randomUUID(),
       socketId,
+      // Identité STABLE du navigateur (localStorage) : c'est elle qui permet à un
+      // joueur de récupérer sa place — et son identifiant — après un rafraîchissement
+      // de page en pleine partie. Sans elle, chaque connexion est un inconnu.
+      cid: typeof cid === 'string' && cid.length > 0 && cid.length <= 64 ? cid : null,
       pseudo: sanitizeText(pseudo),
       avatar: sanitizeText(avatar) || '🎮',
       color: /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#7c5cff',
@@ -76,6 +80,25 @@ export class UserManager {
     const user = this.bySocket.get(socketId);
     this.bySocket.delete(socketId);
     return user ?? null;
+  }
+
+  /**
+   * Détache un utilisateur de sa socket morte SANS le détruire : il part « en
+   * grâce » (il garde son id, son salon, son profil) en attendant un éventuel
+   * retour. À utiliser en tandem avec rattacher().
+   */
+  detacher(socketId) {
+    const user = this.bySocket.get(socketId);
+    this.bySocket.delete(socketId);
+    if (user) user.socketId = null;
+    return user ?? null;
+  }
+
+  /** Le joueur revient : on raccroche SON utilisateur à sa nouvelle socket. */
+  rattacher(user, socketId) {
+    user.socketId = socketId;
+    this.bySocket.set(socketId, user);
+    return user;
   }
 
   /** Vue publique d'un utilisateur (jamais exposer socketId). */

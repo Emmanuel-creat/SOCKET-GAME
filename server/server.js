@@ -17,6 +17,7 @@ import { GameRegistry } from './games/GameRegistry.js';
 import { registerSocketHandlers } from './sockets/registerSocketHandlers.js';
 import { AdminService } from './admin/AdminService.js';
 import { DiagnosticService } from './admin/DiagnosticService.js';
+import { ReconnexionGrace } from './rooms/ReconnexionGrace.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -56,13 +57,16 @@ const rooms = new RoomManager({ users });
 const lobby = new LobbyManager({ io, users, rooms, gameRegistry });
 const admin = new AdminService({ io, users, rooms, gameRegistry });
 const diagnostics = new DiagnosticService({ io, users, rooms, gameRegistry, admin });
+// Grâce de reconnexion : un joueur en partie qui perd sa socket garde sa place
+// (et son identifiant) le temps de revenir — un F5 n'est plus une exclusion.
+const grace = new ReconnexionGrace();
 
 // Rafraîchissement de la page programmeur (uniquement s'il y a quelqu'un derrière).
 setInterval(() => admin.diffuser(), 2000);
 
 io.on('connection', (socket) => {
   admin.onConnect(socket);
-  registerSocketHandlers({ io, socket, users, rooms, lobby, gameRegistry, admin, diagnostics });
+  registerSocketHandlers({ io, socket, users, rooms, lobby, gameRegistry, admin, diagnostics, grace });
 });
 
 httpServer.listen(PORT, () => {

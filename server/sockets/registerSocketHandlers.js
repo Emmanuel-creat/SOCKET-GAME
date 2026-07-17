@@ -7,7 +7,7 @@ import { EVENTS } from '../../shared/events.js';
 import { GAME_STATE, LIMITS, ROOM_STATUS } from '../../shared/constants.js';
 import { sanitizeText, isValidChatMessage } from '../../shared/validation.js';
 
-export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRegistry, admin = null, diagnostics = null }) {
+export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRegistry, admin = null, diagnostics = null, grace = null }) {
   /** Raccourci : émet une erreur normalisée au client courant. */
   const fail = (code, message) => socket.emit(EVENTS.SYS_ERROR, { code, message });
 
@@ -62,6 +62,39 @@ export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRe
   // ------------------------------------------------------------------
 
   socket.on(EVENTS.USER_REGISTER, (payload = {}) => {
+    // REPRISE DE PARTIE — le cœur du correctif « mes commandes n'arrivent jamais ».
+    // Si ce navigateur (identifié par son cid persistant) a quitté une partie en
+    // cours il y a moins de GRACE_MS, on ne crée PAS un inconnu : on lui rend SON
+    // utilisateur — même id, même place au salon. L'engine du Host le reconnaît
+    // donc immédiatement, et ses commandes redeviennent valides sans rien changer.
+    const reprise = payload.cid && grace ? grace.reprendre(payload.cid) : null;
+    if (reprise) {
+      const user = users.rattacher(reprise.user, socket.id);
+      const room = rooms.get(reprise.roomId);
+      socket.emit(EVENTS.USER_REGISTERED, { user: users.toPublic(user) });
+      lobby.sendSnapshot(socket);
+      if (room && room.has(user.id)) {
+        socket.join(room.id);
+        socket.emit(EVENTS.ROOM_JOINED, { room: room.toPublic((u) => users.toPublic(u)) });
+        lobby.notifyRoom(room, 'info', `${user.pseudo} est revenu.`);
+        lobby.broadcastRoomState(room);
+        // La partie tourne toujours : on la lui renvoie. Son module remonte, envoie
+        // son « hello », reçoit un état complet — et il rejoue, avec le même id.
+        if (room.status === ROOM_STATUS.IN_GAME && room.gameId) {
+          const context = {
+            roomId: room.id,
+            roomName: room.name,
+            hostId: room.hostId,
+            players: room.players.map((u) => users.toPublic(u)),
+          };
+          socket.emit(EVENTS.GAME_STARTED, { gameId: room.gameId, context });
+        }
+      }
+      lobby.broadcastPlayers();
+      console.log(`[pipeline] reprise : ${user.pseudo} (${user.id.slice(0, 8)}) a récupéré sa place`);
+      return;
+    }
+
     const user = users.register(socket.id, payload);
     if (!user) return fail('INVALID_PROFILE', `Pseudo invalide (${LIMITS.PSEUDO_MIN} à ${LIMITS.PSEUDO_MAX} caractères).`);
     socket.emit(EVENTS.USER_REGISTERED, { user: users.toPublic(user) });
@@ -242,20 +275,55 @@ export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRe
     lobby.broadcastPlayers();
   });
 
+  // Journal du pipeline : chaque message jeté est COMPTÉ et LOGGUÉ (throttlé).
+  // Un relais qui jette en silence, c'est des heures de débogage à l'aveugle : le
+  // symptôme « mes commandes n'arrivent jamais » a tenu des semaines précisément
+  // parce que rien, nulle part, ne disait où elles mouraient.
+  const pipelineDrops = registerSocketHandlers._drops ??= new Map();   // raison -> { n, depuis, dernierLog }
+  const dropPipeline = (raison, detail) => {
+    const e = pipelineDrops.get(raison) ?? { n: 0, dernierLog: 0 };
+    e.n += 1;
+    const now = Date.now();
+    if (now - e.dernierLog > 2000) {   // au plus un log toutes les 2 s par raison
+      console.warn(`[pipeline] ${raison} ×${e.n} — ${detail}`);
+      e.dernierLog = now;
+      e.n = 0;
+    }
+    pipelineDrops.set(raison, e);
+  };
+
   socket.on(EVENTS.GAME_MESSAGE, ({ to = null, data } = {}) => {
     const user = requireUser();
     const room = user && requireRoom(user);
-    if (!room) return;
-    if (room.status !== ROOM_STATUS.IN_GAME) return fail('NO_GAME_RUNNING', 'Aucune partie en cours.');
-    if (data === undefined) return;
+    if (!room) return;   // requireUser/requireRoom ont déjà émis l'erreur au client
+    if (room.status !== ROOM_STATUS.IN_GAME) {
+      dropPipeline('NO_GAME_RUNNING', `de ${user.pseudo}`);
+      return fail('NO_GAME_RUNNING', 'Aucune partie en cours.');
+    }
+    if (data === undefined) {
+      dropPipeline('PAYLOAD_VIDE', `de ${user.pseudo}`);
+      return fail('EMPTY_GAME_MESSAGE', 'Message de jeu vide.');
+    }
 
     const envelope = { from: user.id, data };
     if (to) {
       // Message ciblé (ex. : envoyer sa main privée à un joueur précis).
       const target = users.getById(to);
-      if (!target || !room.has(target.id)) return fail('TARGET_NOT_IN_ROOM', 'Destinataire introuvable dans le salon.');
+      if (!target || !room.has(target.id)) {
+        // Destinataire simplement ABSENT (en grâce de reconnexion) : ce n'est pas
+        // une erreur. Ses vues se perdent le temps de son retour — il recevra un
+        // état complet via son « hello ». On compte, on ne crie pas.
+        if (grace?.enGrace(to)) { dropPipeline('DESTINATAIRE_EN_GRACE', `vers ${to.slice(0, 8)}`); return; }
+        dropPipeline('TARGET_NOT_IN_ROOM', `de ${user.pseudo} vers ${String(to).slice(0, 8)}`);
+        return fail('TARGET_NOT_IN_ROOM', 'Destinataire introuvable dans le salon.');
+      }
       const targetSocket = io.sockets.sockets.get(target.socketId);
-      targetSocket?.emit(EVENTS.GAME_MESSAGE, envelope);
+      if (!targetSocket) {
+        // Membre du salon mais socket morte (grâce en cours) : même traitement.
+        dropPipeline('SOCKET_ABSENTE', `vers ${target.pseudo}`);
+        return;
+      }
+      targetSocket.emit(EVENTS.GAME_MESSAGE, envelope);
     } else {
       // Diffusion à tous les autres membres du salon.
       socket.to(room.id).emit(EVENTS.GAME_MESSAGE, envelope);
@@ -283,6 +351,49 @@ export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRe
     admin?.onDisconnect(socket);
     const user = users.get(socket.id);
     if (!user) return;
+
+    // GRÂCE DE RECONNEXION — si ce joueur est dans une partie EN COURS et porte une
+    // identité stable, on ne le retire pas : on le détache de sa socket morte et on
+    // l'attend GRACE_MS. Un rafraîchissement de page n'est plus une exclusion : au
+    // retour (même cid), il récupère son utilisateur — même id — et l'engine du
+    // Host, qui ne connaît que les joueurs du lancement, le reconnaît. C'est CE
+    // mécanisme qui garantit que ses commandes atteignent à nouveau l'autorité.
+    const room = user.roomId ? rooms.get(user.roomId) : null;
+    if (grace && room && room.status === ROOM_STATUS.IN_GAME && user.cid) {
+      users.detacher(socket.id);
+      const ok = grace.differer(user, room, (parti, etaitHost) => {
+        // Personne n'est revenu : retrait réel, ANNONCÉ.
+        console.log(`[pipeline] grâce expirée : ${parti.pseudo} (${parti.id.slice(0, 8)})${etaitHost ? ` — c'était le Host` : ''}`);
+        const r = parti.roomId ? rooms.get(parti.roomId) : null;
+        if (r && etaitHost && r.status === ROOM_STATUS.IN_GAME) {
+          // L'autorité de la partie vivait dans SON navigateur : sans lui, les
+          // invités commanderaient dans le vide pour toujours. On termine
+          // proprement — plus de partie zombie silencieuse.
+          rooms.endGame(r);
+          io.to(r.id).emit(EVENTS.GAME_ENDED, { result: { interrompu: true, message: `Partie interrompue : ${parti.pseudo} (l'hôte) ne s'est pas reconnecté.` } });
+        }
+        if (r) {
+          const { deleted, newHostId } = rooms.leave(parti);
+          if (!deleted) {
+            if (newHostId) lobby.notifyRoom(r, 'warning', 'Le Host a quitté : nouveau Host désigné.');
+            lobby.notifyRoom(r, 'info', `${parti.pseudo} a quitté la partie (déconnecté).`);
+            lobby.broadcastRoomState(r);
+          }
+          lobby.broadcastRooms();
+        }
+        lobby.broadcastPlayers();
+      });
+      if (ok) {
+        lobby.notifyRoom(room, 'warning', `${user.pseudo} a perdu la connexion — il peut revenir.`);
+        lobby.broadcastRoomState(room);
+        lobby.broadcastPlayers();
+        console.log(`[pipeline] grâce ouverte : ${user.pseudo} (${user.id.slice(0, 8)}) — retour possible`);
+        return;
+      }
+      // Pas d'identité stable : on retombe sur le comportement historique.
+      users.rattacher(user, socket.id);
+    }
+
     leaveCurrentRoom(null);
     users.remove(socket.id);
     lobby.broadcastPlayers();

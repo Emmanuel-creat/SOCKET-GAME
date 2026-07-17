@@ -163,7 +163,18 @@ export class SocketClient {
     this.socket.emit(EVENTS.DIAG_ECHO_REPORT, { id: e.id, recus: e.vus.size, moy });
   }
 
-  register(profile) { this.socket.emit(EVENTS.USER_REGISTER, profile); }
+  register(profile) {
+    // Identité stable du navigateur : générée une fois, gardée en localStorage.
+    // C'est elle qui permet de récupérer sa place (et son identifiant) dans une
+    // partie en cours après un rafraîchissement de page — sans elle, chaque F5
+    // faisait de vous un inconnu que le moteur du Host ignorait à jamais.
+    let cid = null;
+    try {
+      cid = localStorage.getItem('arcade:cid');
+      if (!cid) { cid = crypto.randomUUID(); localStorage.setItem('arcade:cid', cid); }
+    } catch { cid = null; }
+    this.socket.emit(EVENTS.USER_REGISTER, { ...profile, cid });
+  }
   updateProfile(profile) { this.socket.emit(EVENTS.USER_UPDATE_PROFILE, profile); }
   setStatus(status) { this.socket.emit(EVENTS.USER_SET_STATUS, { status }); }
 

@@ -153,9 +153,39 @@ class TraqueUI {
         // ne reçoit que du différentiel — des positions sans carte, joueurs « dans le vide ».
         if (data?.t === 'hello') { this.syncMap.delete(from); this.broadcast(); return; }
         if (data?.t !== 'action') return;
+
+        // Journal du pipeline : les entrées portent un numéro de séquence. Sur une
+        // liaison WebSocket (TCP), un trou ou un désordre est ANORMAL — s'il
+        // apparaît ici, il vient de l'application, pas du réseau, et ce log le dira.
+        if (data.action.a === 'input' && Number.isFinite(data.action.seq)) {
+          this.seqParJoueur ??= new Map();
+          const attendu = (this.seqParJoueur.get(from) ?? 0) + 1;
+          if (data.action.seq !== attendu && this.seqParJoueur.has(from)) {
+            console.warn(`[pipeline] séquence d'entrées inattendue de ${from.slice(0, 8)} : reçu ${data.action.seq}, attendu ${attendu}`);
+          }
+          this.seqParJoueur.set(from, data.action.seq);
+        }
+
         const res = this.engine.handleAction(from, data.action);
-        if (!res?.ok && res?.error && data.action.a !== 'input') {
-          this.ctx.sendMessage({ t: 'error', message: res.error }, from);
+        if (!res?.ok && res?.error) {
+          if (data.action.a !== 'input') {
+            this.ctx.sendMessage({ t: 'error', message: res.error }, from);
+          } else {
+            // Une ENTRÉE rejetée n'est plus un silence : on la compte, on la loggue
+            // (throttlé), et on répond UN « resync » — l'expéditeur renverra son
+            // hello et repartira sur un état complet. C'était l'angle mort exact du
+            // bug « mes commandes n'arrivent jamais » : tout mourait ici, sans bruit.
+            this.rejets ??= new Map();
+            const r = this.rejets.get(from) ?? { n: 0, dernier: 0 };
+            r.n += 1;
+            const now = Date.now();
+            if (now - r.dernier > 2000) {
+              console.warn(`[pipeline] entrée rejetée ×${r.n} de ${from.slice(0, 8)} : ${res.error} → resync demandé`);
+              this.ctx.sendMessage({ t: 'resync' }, from);
+              r.dernier = now; r.n = 0;
+            }
+            this.rejets.set(from, r);
+          }
         }
       });
       this.loop = setInterval(() => this.hostTick(), TICK_MS);
@@ -164,6 +194,9 @@ class TraqueUI {
         if (from !== this.hostId) return;
         if (data?.t === 'view') this.receive(data.view);
         else if (data?.t === 'error') this.status(data.message);
+        // Le Host ne nous reconnaît pas (rejet d'entrées) : on se ré-annonce.
+        // Il répond au hello par un état complet — on repart proprement.
+        else if (data?.t === 'resync') this.ctx.sendMessage({ t: 'hello' }, this.hostId);
       });
       // On est abonné : on annonce au Host qu'on est prêt à recevoir. Il nous renverra
       // un état complet, même s'il diffusait déjà avant qu'on ait fini de monter.
@@ -351,7 +384,7 @@ class TraqueUI {
 
     this.lastSig = sig;
     this.lastSent = now;
-    this.act({ a: 'input', dx, dy, aim: Math.round(this.aim * 100) / 100, sneak, sprint, ts: Date.now() });
+    this.act({ a: 'input', dx, dy, aim: Math.round(this.aim * 100) / 100, sneak, sprint, ts: Date.now(), seq: (this.inputSeq = (this.inputSeq ?? 0) + 1) });
   }
 
   /* ------------------------- construction du DOM ------------------------- */

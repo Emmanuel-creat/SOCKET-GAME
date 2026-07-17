@@ -154,9 +154,36 @@ class AmongUI {
         // qu'on croyait lui avoir envoyé, sa prochaine vue sera COMPLÈTE (carte + roster).
         if (data?.t === 'hello') { this.syncMap.delete(from); this.broadcast(); return; }
         if (data?.t !== 'action') return;
+
+        // Journal du pipeline : sur WebSocket (TCP), un trou de séquence est
+        // anormal — s'il apparaît, il vient de l'application, et ce log le dira.
+        if (data.action.a === 'input' && Number.isFinite(data.action.seq)) {
+          this.seqParJoueur ??= new Map();
+          const attendu = (this.seqParJoueur.get(from) ?? 0) + 1;
+          if (data.action.seq !== attendu && this.seqParJoueur.has(from)) {
+            console.warn(`[pipeline] séquence d'entrées inattendue de ${from.slice(0, 8)} : reçu ${data.action.seq}, attendu ${attendu}`);
+          }
+          this.seqParJoueur.set(from, data.action.seq);
+        }
+
         const res = this.engine.handleAction(from, data.action);
-        if (!res?.ok && res?.error && data.action.a !== 'input') {
-          this.ctx.sendMessage({ t: 'error', message: res.error }, from);
+        if (!res?.ok && res?.error) {
+          if (data.action.a !== 'input') {
+            this.ctx.sendMessage({ t: 'error', message: res.error }, from);
+          } else {
+            // Une entrée rejetée n'est plus un silence : compteur, log throttlé,
+            // et UN « resync » — l'expéditeur se ré-annonce et repart proprement.
+            this.rejets ??= new Map();
+            const r = this.rejets.get(from) ?? { n: 0, dernier: 0 };
+            r.n += 1;
+            const now = Date.now();
+            if (now - r.dernier > 2000) {
+              console.warn(`[pipeline] entrée rejetée ×${r.n} de ${from.slice(0, 8)} : ${res.error} → resync demandé`);
+              this.ctx.sendMessage({ t: 'resync' }, from);
+              r.dernier = now; r.n = 0;
+            }
+            this.rejets.set(from, r);
+          }
         } else if (res?.ok && data.action.a !== 'input') this.broadcast();
       });
       this.loop = setInterval(() => this.hostTick(), TICK_MS);
@@ -165,6 +192,8 @@ class AmongUI {
         if (from !== this.hostId) return;
         if (data?.t === 'view') this.receive(data.view);
         else if (data?.t === 'error') this.status(data.message);
+        // Le Host ne nous reconnaît pas : on se ré-annonce, il nous renverra tout.
+        else if (data?.t === 'resync') this.ctx.sendMessage({ t: 'hello' }, this.hostId);
       });
       // Abonné : on annonce au Host qu'on est prêt à recevoir un état complet.
       this.ctx.sendMessage({ t: 'hello' }, this.hostId);
@@ -348,7 +377,7 @@ class AmongUI {
 
     this.lastSig = sig;
     this.lastSent = now;
-    this.act({ a: 'input', dx, dy, ts: Date.now() });
+    this.act({ a: 'input', dx, dy, ts: Date.now(), seq: (this.inputSeq = (this.inputSeq ?? 0) + 1) });
   }
 
   killNearby() {
