@@ -10,7 +10,17 @@ import { store } from './Store.js';
 export class SocketClient {
   constructor() {
     /* global io */
-    this.socket = io();
+    // WebSocket EN PREMIER. Par défaut Socket.IO démarre en polling (une requête
+    // HTTP par message !) puis tente une bascule. Un invité resté en polling
+    // sature à lui seul un serveur à 0,1 CPU. Si le WebSocket est bloqué par le
+    // réseau, on retombe sur le mode par défaut.
+    this.socket = io({ transports: ['websocket'], upgrade: false });
+    this.socket.on('connect_error', () => {
+      if (this.secours || this.socket.connected) return;
+      this.secours = true;
+      this.socket.io.opts.transports = ['polling', 'websocket'];
+      this.socket.io.opts.upgrade = true;
+    });
     this.bindIncoming();
   }
 
@@ -59,7 +69,35 @@ export class SocketClient {
     });
 
     // Données de jeu relayées pendant une partie (le module de jeu s'y abonne).
-    s.on(EVENTS.GAME_MESSAGE, ({ from, data }) => bus.emit('game:message', { from, data }));
+    // Les paquets t:'diag' (diagnostic réseau lancé depuis la page programmeur)
+    // empruntent volontairement CE canal — le même trajet qu'une vraie commande de
+    // jeu — mais aucun module ne les connaît : on les intercepte ici, avant le bus.
+    s.on(EVENTS.GAME_MESSAGE, ({ from, data }) => {
+      if (data?.t === 'diag') { this.surPaquetDiag(from, data); return; }
+      bus.emit('game:message', { from, data });
+    });
+
+    // --- Diagnostic réseau : ce client peut être la CIBLE d'une batterie de tests ---
+    // Ping brut : on renvoie le paquet tel quel (le serveur mesure la latence et
+    // vérifie l'intégrité de la charge octet pour octet).
+    s.on(EVENTS.DIAG_PING, (paquet) => s.emit(EVENTS.DIAG_PONG, paquet));
+
+    // Écho relais : on envoie `count` paquets RÉELS via game:message vers `to`
+    // (soi-même ou une contrepartie du salon), on compte ceux qui reviennent,
+    // et on rapporte notre propre bilan. C'est le test qui reproduit exactement
+    // le trajet d'une commande de jeu.
+    s.on(EVENTS.DIAG_ECHO_REQUEST, ({ id, count, paceMs, to } = {}) => this.lancerEcho(id, count, paceMs, to));
+
+    // Progression et résultat d'un diagnostic (côté admin, page programmeur).
+    s.on(EVENTS.DIAG_PROGRESS, (p) => bus.emit('diag:progress', p));
+    s.on(EVENTS.DIAG_RESULT, (r) => bus.emit('diag:result', r));
+
+    // Mesure de latence : on renvoie l'horodatage tel quel, le serveur fait le calcul.
+    s.on(EVENTS.SYS_PING, ({ t }) => s.emit(EVENTS.SYS_PONG, { t }));
+
+    // Supervision (page programmeur).
+    s.on(EVENTS.ADMIN_AUTHED, (res) => bus.emit('admin:authed', res));
+    s.on(EVENTS.ADMIN_STATS, (stats) => bus.emit('admin:stats', stats));
 
     s.on(EVENTS.SYS_NOTIFICATION, ({ type, message }) => bus.emit('notify', { type, message }));
     s.on(EVENTS.SYS_ERROR, ({ message }) => bus.emit('notify', { type: 'error', message }));
@@ -68,6 +106,62 @@ export class SocketClient {
   }
 
   // --- API sortante (une méthode par intention utilisateur) ---
+
+  adminAuth(code) { this.socket.emit(EVENTS.ADMIN_AUTH, { code }); }
+  adminLeave() { this.socket.emit(EVENTS.ADMIN_LEAVE); }
+  runDiagnostic(socketId) { this.socket.emit(EVENTS.DIAG_RUN, { socketId }); }
+
+  /* --- Diagnostic réseau : mécanique côté client ciblé --------------------- */
+
+  /**
+   * Un paquet t:'diag' arrive par game:message.
+   * — S'il porte l'identifiant de NOTRE écho en cours, c'est un de nos paquets qui
+   *   a bouclé : on note sa latence.
+   * — Sinon, nous sommes la CONTREPARTIE d'un écho croisé : on le renvoie tel quel
+   *   à son expéditeur. C'est ce renvoi qui permet de tester un aller-retour réel
+   *   entre deux joueurs sans que le serveur orchestre les deux bouts.
+   */
+  surPaquetDiag(from, data) {
+    const e = this.echoEnCours;
+    if (e && data.id === e.id) {
+      if (!e.vus.has(data.seq)) {
+        e.vus.add(data.seq);
+        e.latences.push(Date.now() - data.sentAt);
+        if (e.vus.size >= e.count) this.finirEcho();   // tout est revenu : bilan immédiat
+      }
+      return;
+    }
+    this.sendGameMessage({ ...data }, from);   // relais croisé : retour à l'envoyeur
+  }
+
+  lancerEcho(id, count, paceMs, to) {
+    if (!id || !Number.isFinite(count) || count <= 0 || !to) return;
+    if (this.echoEnCours) this.finirEcho();    // un seul écho à la fois : on solde l'ancien
+    const e = { id, count, to, vus: new Set(), latences: [], timer: null, fin: null };
+    this.echoEnCours = e;
+
+    let seq = 0;
+    const envoyer = () => {
+      if (this.echoEnCours !== e) return;
+      this.sendGameMessage({ t: 'diag', id, seq, sentAt: Date.now() }, to);
+      seq += 1;
+      if (seq < count) e.timer = setTimeout(envoyer, Math.max(0, paceMs ?? 0));
+      else e.fin = setTimeout(() => this.finirEcho(), Math.max(600, (paceMs ?? 0) * 4 + 600));
+    };
+    envoyer();
+  }
+
+  finirEcho() {
+    const e = this.echoEnCours;
+    if (!e) return;
+    this.echoEnCours = null;
+    clearTimeout(e.timer);
+    clearTimeout(e.fin);
+    const moy = e.latences.length
+      ? Math.round(e.latences.reduce((a, b) => a + b, 0) / e.latences.length)
+      : null;
+    this.socket.emit(EVENTS.DIAG_ECHO_REPORT, { id: e.id, recus: e.vus.size, moy });
+  }
 
   register(profile) { this.socket.emit(EVENTS.USER_REGISTER, profile); }
   updateProfile(profile) { this.socket.emit(EVENTS.USER_UPDATE_PROFILE, profile); }

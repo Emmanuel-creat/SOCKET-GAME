@@ -43,4 +43,21 @@ export const EVENTS = Object.freeze({
   // --- Système ---
   SYS_NOTIFICATION: 'sys:notification', // serveur -> client : { type, message }
   SYS_ERROR: 'sys:error', // serveur -> client : { code, message }
+  SYS_PING: 'sys:ping', // serveur -> client : { t } (mesure de latence)
+  SYS_PONG: 'sys:pong', // client -> serveur : { t }
+
+  // --- Supervision (page programmeur, accès par code vérifié côté serveur) ---
+  ADMIN_AUTH: 'admin:auth', // client -> serveur : { code }
+  ADMIN_AUTHED: 'admin:authed', // serveur -> client : { ok, error? }
+  ADMIN_STATS: 'admin:stats', // serveur -> admin : { serveur, capacite, reseau, clients, salons, historique }
+  ADMIN_LEAVE: 'admin:leave', // client -> serveur : fin de la supervision
+
+  // --- Diagnostic réseau (page programmeur → un client ciblé) ---
+  DIAG_RUN: 'diag:run', // admin -> serveur : { socketId } (garde : admins authentifiés seulement)
+  DIAG_PROGRESS: 'diag:progress', // serveur -> admin : { etape, ok, detail } (au fil des tests)
+  DIAG_RESULT: 'diag:result', // serveur -> admin : rapport final { erreur? | identite, etapes }
+  DIAG_PING: 'diag:ping', // serveur -> client ciblé : { id, seq, sentAt, payload? }
+  DIAG_PONG: 'diag:pong', // client ciblé -> serveur : le paquet renvoyé tel quel (latence + intégrité)
+  DIAG_ECHO_REQUEST: 'diag:echo:request', // serveur -> cible : { id, count, paceMs, to } — envoie des paquets RÉELS via game:message
+  DIAG_ECHO_REPORT: 'diag:echo:report', // cible -> serveur : { id, recus, moy } — son propre bilan d'aller-retours
 });
