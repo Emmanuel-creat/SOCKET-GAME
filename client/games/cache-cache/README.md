@@ -1,54 +1,83 @@
-# Cache-Cache — module Arcade
+# Cache-Cache « Camouflage » — module Arcade
 
-Cache-cache asynchrone à **2 à 8 joueurs** : chaque joueur est Chasseur exactement une fois et doit retrouver tous les autres, chacun caché sur la carte de son choix.
+**Changement de mécanique en v2.0.0** : ce module remplace entièrement la précédente chasse à
+l'aveugle (clic + indice de proximité) par une chasse **visuelle de camouflage**, décrite
+ci-dessous. L'architecture plateforme (Host autoritaire, `game:message`, chat) est conservée ;
+seule la logique de jeu change.
 
-## Architecture « Host autoritaire »
+## Principe
 
-- Le client du **Host** exécute le moteur de règles (`CacheCacheEngine`, classe pure sans DOM ni réseau, exportée pour les tests). Il ne possède aucun `setTimeout` interne : il expose des méthodes de transition (`startRound`, `beginHide`, `beginHunt`, `nextHuntTarget`, `resolveTimeout`, `forceAdvanceFromPickMap`, `forceAdvanceFromHide`…) que la couche Host orchestre avec des minuteries, exactement comme les modules Tarot et Memory.
-- **Confidentialité stricte** : les choix de carte, de forme et de position **ne quittent jamais le Host** sous leur forme brute. Chaque joueur reçoit une vue personnalisée (`getViewFor(playerId)`) :
-  - Pendant le choix de carte / la cache : seul le cacheur concerné reçoit `mySelection` (sa propre carte/forme/position). Les autres cacheurs et le Chasseur ne voient que des statuts génériques (`choisit sa carte…`, `se cache…`, `prêt·e`).
-  - Pendant la chasse : le Chasseur reçoit uniquement l'identifiant de la carte de fond de la cible en cours (jamais la forme ni sa position — la résolution du clic est calculée côté Host). Le joueur actuellement recherché voit sa propre carte + sa forme (normal, ce sont ses données) ainsi que les clics du Chasseur en direct. Les autres cacheurs en attente ne voient qu'un statut public (qui est recherché, dernier indice de couleur, nombre de clics).
-- Les autres clients sont de purs afficheurs : ils rendent la dernière vue reçue et envoient leurs actions (`{ a: 'pickMap' | 'place' | 'lock' | 'huntClick' }`) au Host.
-- Transport : relais générique `game:message` du moteur — envoi ciblé par joueur pour les vues de jeu (jamais de diffusion publique de données sensibles), diffusion à tout le salon pour le chat (comme dans le module Memory).
+Chaque joueur est Chasseur exactement une fois (ordre tiré au sort en début de partie). Une
+manche = 1 Chasseur + (n-1) Cacheurs, sur **une carte partagée** tirée au sort.
 
-## Assets
+1. **Phase de cache (2 min)** — Les Cacheurs apparaissent en petits personnages blancs sur la
+   carte. Ils peuvent :
+   - se déplacer (clic sur le décor, tant que non verrouillé) ;
+   - se **peindre** avec la pipette : un clic échantillonne la couleur exacte du décor à cet
+     endroit et l'applique instantanément à leur personnage ;
+   - **verrouiller/déverrouiller** leur position (la peinture reste modifiable même verrouillé).
 
-Fournis par la plateforme dans `client/games/cache-cache/assets/`, copiés tels quels (mêmes noms, mêmes dossiers) :
-- `assets/maps/1.png` à `10.png` — 10 cartes de fond, utilisées comme `background-image` d'une zone de jeu carrée (`aspect-ratio: 1/1`, `object-fit: cover` implicite via `background-size: cover`).
-- `assets/formes/1.png` à `10.png` — 10 formes à cacher, affichées en superposition (taille et rotation ajustables par le cacheur).
+   Le Chasseur est sur un écran noir d'attente. **Aucune carte ni position ne lui est transmise
+   pendant cette phase** — la confidentialité est assurée au niveau du transport (le Host cible
+   individuellement chaque Cacheur), pas seulement de l'affichage : même une personne malveillante
+   lisant le trafic réseau du Chasseur ne verrait rien.
 
-⚠️ Les fichiers fournis sont volumineux (jusqu'à ~4 Mo par carte, ~42 Mo au total) et n'ont pas été recompressés afin de préserver exactement les assets fournis. Pour une mise en production, il est recommandé de les optimiser (redimensionnement, compression WebP) — cela n'a **pas** été fait ici pour respecter la consigne « ne pas renommer/altérer sauf nécessité ».
+   Dès que tous les Cacheurs ont verrouillé leur position, la phase de chasse démarre
+   immédiatement (sinon, bascule automatique à 2 minutes).
 
-## Déroulement d'une manche
+2. **Phase de chasse** — Le Chasseur reçoit la scène (carte + position/couleur de chaque
+   Cacheur) et dispose de **2×(n-1) tirs**. Un clic pose un impact de peinture ; s'il touche la
+   zone d'un Cacheur non encore trouvé, celui-ci est éliminé pour la manche. Les Cacheurs,
+   spectateurs, voient la même scène ainsi que le viseur du Chasseur et les impacts en direct.
+   La manche se termine dès que les munitions sont épuisées ou que tout le monde est trouvé
+   (filet de sécurité : 2 minutes maximum).
 
-1. **Choix de carte (30 s)** — chaque cacheur sélectionne une carte parmi les 10 (peut changer d'avis jusqu'à la fin de la phase). Passage anticipé à l'étape suivante si tout le monde a choisi ; sinon attribution aléatoire aux retardataires à l'expiration du délai.
-2. **Cache (30 s)** — chaque cacheur choisit une forme, la place en cliquant/touchant la carte (ou via les flèches du clavier + Entrée), ajuste taille et rotation, puis verrouille. Une fois verrouillée, la cachette ne peut plus bouger. Passage anticipé si tout le monde a verrouillé ; sinon verrouillage automatique (forme et position aléatoires) à l'expiration du délai.
-3. **Chasse (30 s par carte, ordre aléatoire)** — le Chasseur clique sur la carte de la cible en cours. Chaque clic coûte 3 secondes sur le temps restant. Un clic dans le rayon de la forme = trouvé (+1 point Chasseur, carte suivante). Un clic manqué renvoie un indice de proximité normalisé (couleur + libellé, du bleu clair « très loin » au rouge « brûlant »), affiché publiquement à côté des informations du Chasseur le temps de cette chasse. Si le temps s'écoule sans succès, le cacheur marque 1 point et on passe à la carte suivante. Une brève transition (« Trouvé ! » / « Temps écoulé ! ») s'affiche entre deux cibles.
+3. **Score** : un Cacheur non trouvé rapporte 2 points ; le Chasseur gagne 1 point par Cacheur
+   repéré. Résultat de manche affiché quelques secondes, puis manche suivante (nouveau Chasseur,
+   nouvelle carte) jusqu'à ce que chacun ait chassé une fois, puis classement final.
 
-La partie s'enchaîne automatiquement : dès qu'un Chasseur a fouillé tout le monde, la manche suivante démarre avec le prochain joueur (ordre tiré au sort en début de partie) jusqu'à ce que tous aient chassé une fois. Classement final par points cumulés, égalité partagée.
+## Choix d'implémentation notables
 
-## Interface
-
-- Zone de jeu principale carrée et centrée légèrement à gauche, utilisable à la souris, au tactile et au clavier (flèches pour déplacer le curseur, Entrée/Espace pour valider).
-- En-tête : titre, manche x/total, phase et minuteur, nom du Chasseur, nom du joueur actuellement recherché (en chasse), nombre de clics, légende du dégradé de proximité, et pastille de couleur du dernier clic.
-- Colonne latérale : tableau des scores en direct, statut/rôle du joueur, chat de partie, et pour le Host un bouton « 🛑 Terminer la partie » (même comportement que dans Tarot : classement affiché puis retour automatique au salon après quelques secondes).
-- Pendant le choix de carte / la cache, le Chasseur ne voit qu'un écran d'instructions (minuteur, statuts génériques des cacheurs, rappel de la pénalité de clic et du dégradé de proximité) — jamais les cartes ni les formes des autres.
+- **Pas d'image composite envoyée sur le réseau.** Plutôt que de transmettre une image
+  aplatie (lourde, coûteuse), le Host diffuse uniquement des données légères — carte choisie +
+  `{x, y, couleur}` de chaque Cacheur — et **chaque client recompose la scène localement** à
+  partir de l'asset de carte déjà disponible. Le rendu final est identique pour l'utilisateur,
+  avec beaucoup moins de trafic réseau : c'est cette approche qui remplit le mieux l'objectif
+  d'optimisation demandé, plutôt qu'un envoi d'image brute.
+- **Échantillonnage de couleur fiable.** La pipette lit la couleur sur un canevas hors-écran
+  contenant uniquement la carte (jamais les personnages), donc cliquer près de soi ou d'un autre
+  joueur ne fausse jamais l'échantillon.
+- **Mises à jour légères en direct.** Déplacements/couleurs pendant la cache et
+  curseur/impacts pendant la chasse voyagent en petits messages ciblés (pas de re-diffusion de
+  vue complète à chaque frappe), pour rester fluide même à 8 joueurs.
+- **Formes (assets `assets/formes/`) non réutilisées.** L'ancienne mécanique proposait 10 formes
+  au choix ; la nouvelle utilise un seul personnage (silhouette dessinée en Canvas), personnalisé
+  uniquement par la couleur — conforme à la description demandée. Les fichiers restent présents
+  dans le dépôt (inoffensifs, non chargés) au cas où ils resserviraient plus tard.
+- **10 cartes (`assets/maps/`) réutilisées telles quelles**, une par manche, tirées sans
+  répétition immédiate.
 
 ## Limites connues
 
-- **Déconnexion en cours de manche** : comme pour Tarot, la partie ne peut pas se poursuivre sans le joueur concerné ; le Host dispose du bouton « Terminer la partie » pour ramener tout le monde au salon. Si le Host lui-même quitte, le serveur ferme le salon (comportement standard du moteur).
-- La zone de jeu est affichée en carré (`cover`) quelle que soit la proportion réelle de l'image source : les cartes non carrées sont donc légèrement rognées sur les bords, pas déformées.
-- Le rayon de succès du clic dépend de l'échelle choisie par le cacheur (formes plus grandes = plus faciles à trouver), volontairement, pour donner un intérêt stratégique au réglage de taille.
+- **Reconnexion en cours de manche** : un client qui rejoint en retard une phase de cache ou de
+  chasse déjà commencée reçoit l'état courant via le prochain message, mais ne rattrape pas
+  l'historique des tout premiers instants (pas critique : la scène finale reste correcte).
+- **Anti-triche cosmétique côté Chasseur pendant la chasse** : une fois la phase de chasse
+  commencée, la position/couleur de chaque Cacheur transite normalement vers le client du
+  Chasseur pour permettre l'affichage (c'est le principe même du jeu). Comme pour les autres
+  jeux de la plateforme, on fait confiance au client pour l'affichage ; seule la résolution des
+  tirs (touché/raté) est arbitrée par le Host.
+- **Palette de couleurs** : la pipette échantillonne la carte affichée ; elle ne propose pas de
+  nuancier manuel indépendant.
 
 ## Tests
 
-Le moteur étant pur et exporté (`import { CacheCacheEngine } from './index.js'`), il est testable en Node sans navigateur : 210 parties complètes simulées (2 à 8 joueurs, choix aléatoires légaux à chaque étape, timeouts simulés), invariants vérifiés (chaque joueur chasse exactement une fois, nombre de manches = nombre de joueurs, total de points distribués = manches × (n-1), classement final toujours complet), et rejet vérifié des actions illégales (mauvaise phase, mauvais joueur, carte/forme hors bornes, effectifs hors 2–8 joueurs).
-
-## Audit d'installation (plateforme)
-
-Le zip d'origine a été audité et corrigé avant intégration :
-
-- **`games.json` obsolète remplacé (bloquant)** : celui du zip datait d'avant les mises à jour Codenames / Petit Bac / Le Dossier / Loup-Garou / Bomberman / Memory. L'écraser aurait fait régresser **5 jeux** en « en-developpement » v0.0.0 (donc injouables) et **supprimé la fiche du Dossier** au profit de l'ancien `placeholder01`. Le `games.json` livré ici repart de l'état courant du repo, avec la seule fiche `cache-cache` mise à jour (disponible, v1.0.0, 2-8 joueurs).
-- **Chemins d'assets corrigés (bloquant)** : le module référençait ses images en relatif. Dans une url() CSS ou un `src` d'image, un chemin relatif se résout par rapport à l'URL de la **page** (la SPA, servie à la racine) et non à celle du module : toutes les cartes et toutes les formes auraient renvoyé un 404, rendant le jeu inutilisable. Passage à une base absolue `/games/cache-cache/assets`, comme les modules Memory et Le Dossier.
-
-Le reste du module était conforme : contrat du relais respecté (vues ciblées, chat diffusé, `onEnd` avec résumé), moteur pur exporté et testable, et **confidentialité correcte** — la vue du Chasseur ne contient ni la position, ni la forme de la cachette, seulement la carte et l'indice de proximité.
+Le moteur (`CacheCacheEngine`) est pur (sans DOM) et testé indépendamment en Node : bornes de
+joueurs, confidentialité des vues par phase/rôle, verrouillage, détection de tir, rotation
+complète du rôle de Chasseur, conservation des points, 300 parties aléatoires simulées de bout
+en bout. L'intégration (montage multi-clients, interactions canevas, échantillonnage de couleur
+réel, tir/touché, spectateurs en direct, rotation de manche, fin de partie notifiée à tous les
+joueurs) a été validée via une simulation DOM (jsdom + rendu Canvas réel + vraies images de
+cartes servies localement), qui a d'ailleurs permis de repérer et corriger deux bugs avant
+livraison (un re-rendu qui annulait le verrouillage local, et la notification de fin de partie
+qui n'atteignait pas les invités).

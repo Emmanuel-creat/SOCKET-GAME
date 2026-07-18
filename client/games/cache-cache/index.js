@@ -1,481 +1,302 @@
 /**
- * Cache-Cache — module de jeu pour la plateforme Arcade.
+ * Cache-Cache « Camouflage » — module Arcade.
+ * Contrat : export default { async mount(container, context) {}, unmount() {} }
+ * context: { roomId, roomName, hostId, players, me, socket, sendMessage, onMessage, onEnd }
  *
- * Architecture « Host autoritaire » (identique au module Tarot) :
- *  - Le client du Host exécute le moteur de règles (CacheCacheEngine) :
- *    rotation du Chasseur, phases chronométrées, résolution des recherches.
- *    Les choix de carte/forme/position ne quittent JAMAIS le Host tels quels :
- *    chaque joueur reçoit une vue personnalisée (getViewFor) qui ne contient
- *    que ce que ce joueur a le droit de voir.
- *  - Les autres clients envoient leurs actions au Host via context.sendMessage
- *    (relais game:message du moteur, qui ne lit jamais le contenu) et
- *    reçoivent en retour une vue ciblée (jamais de diffusion publique brute).
- *  - Chat en jeu : même relais générique, diffusion à tout le salon (comme
- *    dans le module Memory), indépendant du moteur de règles.
- *
- * Règles implémentées (2 à 8 joueurs) :
- *  - Chaque joueur est Chasseur exactement une fois (ordre tiré au sort en
- *    début de partie) ; une manche = un Chasseur qui recherche tous les
- *    autres joueurs. Partie terminée quand tout le monde a chassé.
- *  - Manche : (1) Choix de carte (30 s, cacheurs uniquement, privé),
- *    (2) Cache (30 s, cacheurs uniquement, choix/personnalisation d'une
- *    forme + position, verrouillage privé), (3) Chasse (30 s par carte,
- *    ordre aléatoire, clic = -3 s de pénalité, indice de proximité en cas
- *    d'échec, +1 point au Chasseur en cas de réussite ou au cacheur si le
- *    temps s'écoule).
- *  - Confidentialité stricte : le Chasseur ne voit que la carte de fond de
- *    la cible en cours (jamais la forme ni sa position) ; les autres
- *    cacheurs en attente ne voient qu'un statut générique.
- *  - Fin de partie : classement par points (égalité partagée), retour au
- *    salon automatique (bouton Host « Terminer la partie », comme Tarot).
+ * Principe : chaque joueur est Chasseur exactement une fois (ordre tiré au hasard en début de
+ * partie). Une manche = 1 Chasseur + (n-1) Cacheurs sur UNE carte tirée au sort.
+ *  - Phase « cache » (2 min) : les Cacheurs se positionnent et se peignent (pipette + pinceau
+ *    automatique) sur la carte partagée. Le Chasseur est sur un écran noir d'attente : le
+ *    Host ne lui envoie NI la carte NI aucune position tant que cette phase n'est pas finie
+ *    (confidentialité assurée au niveau du transport, pas seulement de l'affichage).
+ *  - Phase « chasse » : le Chasseur reçoit la scène (carte + position/couleur de chaque
+ *    Cacheur) et dispose de 2×(n-1) tirs. Chaque tir pose un impact de peinture ; s'il touche
+ *    la zone d'un Cacheur non trouvé, celui-ci est éliminé. Les Cacheurs, spectateurs, voient
+ *    la même scène ainsi que le viseur du Chasseur et les impacts en direct.
+ *  - Optimisation : plutôt que de transmettre une image composite (lourd, coûteux en réseau),
+ *    le Host diffuse uniquement les données légères {carte, position, couleur} ; chaque client
+ *    recompose la scène localement à partir de l'image de carte déjà chargée (asset statique
+ *    partagé). Même résultat visuel pour beaucoup moins de trafic.
+ *  - Architecture Host-autoritaire identique à Tarot / Échecs : le Host fait tourner
+ *    `CacheCacheEngine` (pur, sans DOM, exporté et testable) et diffuse des vues ciblées par
+ *    joueur via le relais générique `game:message`.
  */
 
-/* ====================================================================== */
-/* Constantes                                                             */
-/* ====================================================================== */
+/* ============================================================================================
+ * MOTEUR (pur, sans DOM — testable en Node)
+ * ========================================================================================== */
 
-const MAPS_COUNT = 10;
-const SHAPES_COUNT = 10;
-const PICK_MAP_MS = 30_000;
-const HIDE_MS = 30_000;
-const HUNT_MS = 30_000;
-const CLICK_PENALTY_MS = 3_000;
-const TRANSITION_MS = 1_800;
-const ROUND_RECAP_MS = 3_200;
-const SCALE_MIN = 0.7;
-const SCALE_MAX = 1.3;
-const HIT_RADIUS_BASE = 0.045; // rayon de succès, en fraction de la carte (avant application de l'échelle)
+export const MAP_COUNT = 10;
+export const HIDE_DURATION_MS = 120_000;
+export const HUNT_DURATION_MS = 120_000;
+export const HIT_RADIUS = 0.045;
+export const SCORE_SURVIVE = 2;
+export const SCORE_PER_HIT = 1;
+const DEFAULT_COLOR = '#f2f2f2';
 
-// Les assets sont servis à côté de ce module. Chemin ABSOLU obligatoire : un
-// chemin relatif dans une url() CSS ou un src d'image se résout par rapport à
-// l'URL de la PAGE (la SPA, servie à la racine), pas à celle du module → 404.
-const ASSETS_BASE = '/games/cache-cache/assets';
-const MAP_SRC = (id) => `${ASSETS_BASE}/maps/${id}.png`;
-const SHAPE_SRC = (id) => `${ASSETS_BASE}/formes/${id}.png`;
-
-/** Dégradé de proximité (du plus proche au plus loin), triés par distance croissante. */
-const PROXIMITY_LEVELS = Object.freeze([
-  { upTo: 0.06, color: '#ff2d2d', label: 'Brûlant' },
-  { upTo: 0.12, color: '#ff8c1a', label: 'Très proche' },
-  { upTo: 0.22, color: '#ffd93d', label: 'Proche' },
-  { upTo: 0.35, color: '#4ade80', label: 'Moyen' },
-  { upTo: 0.50, color: '#22d3ee', label: 'Plus proche' },
-  { upTo: 0.70, color: '#3b82f6', label: 'Loin' },
-  { upTo: Infinity, color: '#bfe4ff', label: 'Très loin' },
-]);
-
-const STATUS_LABEL = { choosing: 'Choisit sa carte…', hiding: 'Se cache…', ready: 'Prêt·e ✅' };
-
-const clamp01 = (v) => Math.min(1, Math.max(0, v));
-
-/* ====================================================================== */
-/* Moteur de règles (pur : aucune dépendance DOM/réseau, pas de setTimeout) */
-/* ====================================================================== */
+function clamp01(n) { return Math.max(0, Math.min(1, Number(n) || 0)); }
 
 export class CacheCacheEngine {
-  /** @param {{id: string, pseudo: string}[]} players 2 à 8 joueurs, ordre fixe. */
   constructor(players, { rng = Math.random } = {}) {
-    if (players.length < 2 || players.length > 8) {
-      throw new Error('Le Cache-Cache se joue à 2 à 8 joueurs sur cette plateforme.');
+    if (!Array.isArray(players) || players.length < 2 || players.length > 8) {
+      throw new Error('Cache-Cache se joue de 2 à 8 joueurs.');
     }
-    this.players = players.map((p) => ({ id: p.id, pseudo: p.pseudo }));
-    this.n = this.players.length;
     this.rng = rng;
-    this.totals = Object.fromEntries(this.players.map((p) => [p.id, 0]));
-    this.log = [];
-    this.finPartie = null;
-
+    this.players = players.map((p) => ({ id: p.id, pseudo: p.pseudo ?? '?' }));
+    this.n = this.players.length;
     this.huntOrder = this.shuffle(this.players.map((p) => p.id));
-    this.huntedSet = new Set();
-    this.roundNumber = 0;
-    this.hunterId = null;
-    this.hiders = [];
-    this.selections = new Map();
-    this.phase = 'pick-map'; // 'pick-map' | 'hide' | 'hunt' | 'round-end' | 'fin-partie'
-    this.phaseDeadline = null;
-    this.currentTarget = null;
-    this.huntQueue = null;
-    this.huntIndex = -1;
-    this.roundRecap = null;
+    this.roundIndex = -1;
+    this.usedMaps = [];
+    this.scores = Object.fromEntries(this.players.map((p) => [p.id, 0]));
+    this.log = [];
+    this.phase = 'attente';
+    this.advanceRound();
   }
 
-  /* ------------------------------ utilitaires ------------------------ */
-
-  say(message) {
-    this.log.push(message);
-    if (this.log.length > 60) this.log.shift();
+  shuffle(arr) {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(this.rng() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
   }
 
   pseudoOf(id) { return this.players.find((p) => p.id === id)?.pseudo ?? '?'; }
 
-  shuffle(arr) {
-    const d = [...arr];
-    for (let i = d.length - 1; i > 0; i -= 1) {
-      const j = Math.floor(this.rng() * (i + 1));
-      [d[i], d[j]] = [d[j], d[i]];
-    }
-    return d;
+  say(text) { this.log.push(text); if (this.log.length > 60) this.log.shift(); }
+
+  pickMap() {
+    if (this.usedMaps.length >= MAP_COUNT) this.usedMaps = [];
+    let id;
+    do { id = 1 + Math.floor(this.rng() * MAP_COUNT); } while (this.usedMaps.includes(id));
+    this.usedMaps.push(id);
+    return id;
   }
 
-  /* ------------------------------ manches ----------------------------- */
+  /* ------------------------------ manches ------------------------------ */
 
-  /** Démarre la manche suivante (le prochain joueur qui n'a pas encore chassé). */
-  startRound() {
-    if (this.huntedSet.size >= this.n) return { ok: false, error: 'Tous les joueurs ont déjà chassé.' };
-    const hunterId = this.huntOrder.find((id) => !this.huntedSet.has(id));
-    this.roundNumber += 1;
-    this.hunterId = hunterId;
-    this.hiders = this.players.map((p) => p.id).filter((id) => id !== hunterId);
-    this.selections = new Map(this.hiders.map((id) => [id, {
-      mapId: null, shapeId: null, x: null, y: null, scale: null, rotation: null, locked: false, status: 'choosing',
+  advanceRound() {
+    this.roundIndex += 1;
+    if (this.roundIndex >= this.n) {
+      this.phase = 'fin';
+      this.say('🏆 Partie terminée.');
+      return;
+    }
+    this.hunterId = this.huntOrder[this.roundIndex];
+    this.hiderIds = this.players.map((p) => p.id).filter((id) => id !== this.hunterId);
+    this.mapId = this.pickMap();
+    this.hiderStates = Object.fromEntries(this.hiderIds.map((id) => [id, {
+      x: 0.5, y: 0.5, color: DEFAULT_COLOR, locked: false, found: false,
     }]));
-    this.phase = 'pick-map';
-    this.phaseDeadline = Date.now() + PICK_MAP_MS;
-    this.currentTarget = null;
-    this.huntQueue = null;
-    this.huntIndex = -1;
-    this.roundRecap = null;
-    this.say(`🙈 Manche ${this.roundNumber}/${this.n} — ${this.pseudoOf(hunterId)} est le Chasseur !`);
-    return { ok: true };
+    this.bullets = 2 * this.hiderIds.length;
+    this.shots = [];
+    this.phase = 'cache';
+    this.say(`🗺️ Manche ${this.roundIndex + 1}/${this.n} — ${this.pseudoOf(this.hunterId)} est le Chasseur.`);
   }
 
-  /* ------------------------------ choix de carte ----------------------- */
+  /* ------------------------------ phase cache ------------------------------ */
 
-  pickMap(playerId, mapId) {
-    if (this.phase !== 'pick-map') return { ok: false, error: 'Ce n\'est pas le moment de choisir une carte.' };
-    if (!this.hiders.includes(playerId)) return { ok: false, error: 'Le Chasseur ne choisit pas de carte.' };
-    mapId = Number(mapId);
-    if (!Number.isInteger(mapId) || mapId < 1 || mapId > MAPS_COUNT) return { ok: false, error: 'Carte invalide.' };
-
-    this.selections.get(playerId).mapId = mapId;
-    if (this.hiders.every((id) => this.selections.get(id).mapId != null)) this.beginHide();
-    return { ok: true };
-  }
-
-  beginHide() {
-    this.phase = 'hide';
-    this.phaseDeadline = Date.now() + HIDE_MS;
-    for (const id of this.hiders) {
-      const sel = this.selections.get(id);
-      sel.status = 'hiding';
-      if (sel.mapId == null) sel.mapId = 1 + Math.floor(this.rng() * MAPS_COUNT);
+  updateHiderState(playerId, patch = {}) {
+    if (this.phase !== 'cache') return { ok: false, error: 'Ce n\'est pas la phase de cache.' };
+    if (playerId === this.hunterId) return { ok: false, error: 'Le Chasseur ne se cache pas.' };
+    const st = this.hiderStates[playerId];
+    if (!st) return { ok: false, error: 'Joueur inconnu.' };
+    if (st.locked && (patch.x !== undefined || patch.y !== undefined) && patch.locked !== false) {
+      return { ok: false, error: 'Position verrouillée : déverrouille pour te déplacer.' };
     }
-    this.say('🎭 Phase de cache : choisissez et placez votre forme, puis verrouillez-la.');
-    return { ok: true };
+    if (typeof patch.x === 'number') st.x = clamp01(patch.x);
+    if (typeof patch.y === 'number') st.y = clamp01(patch.y);
+    if (typeof patch.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(patch.color)) st.color = patch.color;
+    if (typeof patch.locked === 'boolean') st.locked = patch.locked;
+    return { ok: true, state: { ...st } };
   }
 
-  /** Auto-attribution d'une carte aux cacheurs qui n'ont pas choisi à temps. */
-  forceAdvanceFromPickMap() {
-    if (this.phase !== 'pick-map') return { ok: false, error: 'Rien à forcer.' };
-    for (const id of this.hiders) {
-      const sel = this.selections.get(id);
-      if (sel.mapId == null) sel.mapId = 1 + Math.floor(this.rng() * MAPS_COUNT);
-    }
-    this.say('⌛ Temps écoulé pour le choix de carte — attribution automatique aux retardataires.');
-    this.beginHide();
-    return { ok: true };
-  }
-
-  /* ------------------------------ cache -------------------------------- */
-
-  placeShape(playerId, { shapeId, x, y, scale, rotation }) {
-    if (this.phase !== 'hide') return { ok: false, error: 'Ce n\'est pas le moment de se cacher.' };
-    if (!this.hiders.includes(playerId)) return { ok: false, error: 'Le Chasseur ne se cache pas.' };
-    const sel = this.selections.get(playerId);
-    if (sel.locked) return { ok: false, error: 'Votre cachette est déjà verrouillée.' };
-
-    shapeId = Number(shapeId);
-    if (!Number.isInteger(shapeId) || shapeId < 1 || shapeId > SHAPES_COUNT) return { ok: false, error: 'Forme invalide.' };
-    const nx = clamp01(Number(x));
-    const ny = clamp01(Number(y));
-    if (Number.isNaN(nx) || Number.isNaN(ny)) return { ok: false, error: 'Position invalide.' };
-    const nscale = Math.min(SCALE_MAX, Math.max(SCALE_MIN, Number(scale) || 1));
-    const nrot = ((Number(rotation) || 0) % 360 + 360) % 360;
-
-    sel.shapeId = shapeId; sel.x = nx; sel.y = ny; sel.scale = nscale; sel.rotation = nrot;
-    return { ok: true };
-  }
-
-  lockShape(playerId) {
-    if (this.phase !== 'hide') return { ok: false, error: 'Ce n\'est pas le moment de verrouiller.' };
-    const sel = this.selections.get(playerId);
-    if (!sel) return { ok: false, error: 'Le Chasseur ne se cache pas.' };
-    if (sel.locked) return { ok: false, error: 'Déjà verrouillé.' };
-    if (sel.shapeId == null) return { ok: false, error: 'Choisissez et placez une forme avant de verrouiller.' };
-
-    sel.locked = true;
-    sel.status = 'ready';
-    this.say(`🔒 ${this.pseudoOf(playerId)} a verrouillé sa cachette.`);
-    if (this.hiders.every((id) => this.selections.get(id).locked)) this.beginHunt();
-    return { ok: true };
-  }
-
-  /** Auto-verrouillage (forme + position aléatoires) pour les retardataires. */
-  forceAdvanceFromHide() {
-    if (this.phase !== 'hide') return { ok: false, error: 'Rien à forcer.' };
-    for (const id of this.hiders) {
-      const sel = this.selections.get(id);
-      if (sel.locked) continue;
-      if (sel.shapeId == null) sel.shapeId = 1 + Math.floor(this.rng() * SHAPES_COUNT);
-      if (sel.x == null) { sel.x = 0.3 + this.rng() * 0.4; sel.y = 0.3 + this.rng() * 0.4; }
-      if (sel.scale == null) sel.scale = 1;
-      if (sel.rotation == null) sel.rotation = 0;
-      sel.locked = true;
-      sel.status = 'ready';
-    }
-    this.say('⌛ Temps écoulé pour la cache — verrouillage automatique des retardataires.');
-    this.beginHunt();
-    return { ok: true };
-  }
-
-  /* ------------------------------ chasse -------------------------------- */
+  allHidersLocked() { return this.hiderIds.every((id) => this.hiderStates[id].locked); }
 
   beginHunt() {
-    this.phase = 'hunt';
-    this.huntQueue = this.shuffle([...this.hiders]);
-    this.huntIndex = -1;
-    this.say(`🔦 Chasse ! ${this.pseudoOf(this.hunterId)} part en recherche (ordre aléatoire).`);
-    return this.nextHuntTarget();
-  }
-
-  nextHuntTarget() {
-    this.huntIndex += 1;
-    if (this.huntIndex >= this.huntQueue.length) {
-      this.endHuntRound();
-      return { ok: true, roundOver: true };
-    }
-    const hiderId = this.huntQueue[this.huntIndex];
-    const sel = this.selections.get(hiderId);
-    this.currentTarget = {
-      hiderId, mapId: sel.mapId, shapeId: sel.shapeId, x: sel.x, y: sel.y, scale: sel.scale, rotation: sel.rotation,
-      deadline: Date.now() + HUNT_MS, clicks: 0, lastClick: null, resolved: false, resultFlash: null,
-    };
-    this.say(`🗺️ ${this.pseudoOf(this.hunterId)} explore la carte de ${this.pseudoOf(hiderId)}.`);
+    if (this.phase !== 'cache') return { ok: false, error: 'Phase invalide.' };
+    this.phase = 'chasse';
+    this.say(`🔦 La chasse commence : ${this.pseudoOf(this.hunterId)} dispose de ${this.bullets} tirs.`);
     return { ok: true };
   }
 
-  endHuntRound() {
-    this.huntedSet.add(this.hunterId);
-    this.currentTarget = null;
-    this.phase = 'round-end';
-    this.roundRecap = {
-      hunterId: this.hunterId, hunterName: this.pseudoOf(this.hunterId), roundNumber: this.roundNumber,
-      scores: { ...this.totals },
-    };
-    this.say(`✅ Fin de la manche ${this.roundNumber} — tout le monde a été recherché.`);
-  }
+  /* ------------------------------ phase chasse ------------------------------ */
 
-  huntClick(playerId, x, y) {
-    if (this.phase !== 'hunt') return { ok: false, error: 'Ce n\'est pas le moment de chercher.' };
-    if (playerId !== this.hunterId) return { ok: false, error: 'Vous n\'êtes pas le Chasseur.' };
-    const target = this.currentTarget;
-    if (!target || target.resolved) return { ok: false, error: 'Rien à chercher pour le moment.' };
-
-    const nx = clamp01(Number(x));
-    const ny = clamp01(Number(y));
-    if (Number.isNaN(nx) || Number.isNaN(ny)) return { ok: false, error: 'Position de clic invalide.' };
-
-    target.clicks += 1;
-    target.deadline -= CLICK_PENALTY_MS; // chaque clic coûte 3 secondes
-
-    const dx = nx - target.x; const dy = ny - target.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    const hitRadius = HIT_RADIUS_BASE * target.scale;
-
-    if (dist <= hitRadius) {
-      target.resolved = true;
-      target.resultFlash = { type: 'hit', hiderId: target.hiderId };
-      target.lastClick = { x: nx, y: ny, color: '#ff2d2d', label: 'Trouvé !' };
-      this.totals[playerId] += 1;
-      this.say(`🎯 ${this.pseudoOf(playerId)} trouve ${this.pseudoOf(target.hiderId)} !`);
-      return { ok: true, hit: true };
+  shoot(playerId, x, y) {
+    if (this.phase !== 'chasse') return { ok: false, error: 'Ce n\'est pas la phase de chasse.' };
+    if (playerId !== this.hunterId) return { ok: false, error: 'Seul le Chasseur peut tirer.' };
+    if (this.bullets <= 0) return { ok: false, error: 'Plus de munitions.' };
+    const sx = clamp01(x); const sy = clamp01(y);
+    this.bullets -= 1;
+    let hitId = null;
+    for (const id of this.hiderIds) {
+      const st = this.hiderStates[id];
+      if (st.found) continue;
+      if (Math.hypot(st.x - sx, st.y - sy) <= HIT_RADIUS) { hitId = id; break; }
     }
-
-    const level = PROXIMITY_LEVELS.find((l) => dist <= l.upTo);
-    target.lastClick = { x: nx, y: ny, color: level.color, label: level.label };
-    return { ok: true, hit: false, proximity: { color: level.color, label: level.label } };
+    const shot = { x: sx, y: sy, hit: !!hitId, hiderId: hitId, bulletsLeft: this.bullets };
+    this.shots.push(shot);
+    if (hitId) {
+      this.hiderStates[hitId].found = true;
+      this.scores[this.hunterId] += SCORE_PER_HIT;
+      this.say(`🎯 ${this.pseudoOf(this.hunterId)} repère ${this.pseudoOf(hitId)} !`);
+    } else {
+      this.say(`💦 Tir manqué (${this.bullets} munition${this.bullets > 1 ? 's' : ''} restante${this.bullets > 1 ? 's' : ''}).`);
+    }
+    const over = this.bullets <= 0 || this.hiderIds.every((id) => this.hiderStates[id].found);
+    if (over) this.endHunt();
+    return { ok: true, shot, roundOver: this.phase === 'resultat-manche' };
   }
 
-  /** Résolution d'une cible dont le temps est écoulé (appelé par la couche Host). */
-  resolveTimeout() {
-    if (this.phase !== 'hunt') return { ok: false, error: 'Rien à résoudre.' };
-    const target = this.currentTarget;
-    if (!target || target.resolved) return { ok: false, error: 'Rien à résoudre.' };
-    target.resolved = true;
-    target.resultFlash = { type: 'timeout', hiderId: target.hiderId };
-    this.totals[target.hiderId] += 1;
-    this.say(`⏱️ Temps écoulé : ${this.pseudoOf(target.hiderId)} n'a pas été trouvé(e) (+1 point).`);
-    return { ok: true };
+  endHunt() {
+    if (this.phase !== 'chasse') return;
+    for (const id of this.hiderIds) {
+      if (!this.hiderStates[id].found) this.scores[id] += SCORE_SURVIVE;
+    }
+    this.phase = 'resultat-manche';
+    const found = this.hiderIds.filter((id) => this.hiderStates[id].found).length;
+    this.say(`🏁 Fin de manche : ${found}/${this.hiderIds.length} trouvé(s).`);
   }
 
-  /* ------------------------------ fin de partie ------------------------- */
+  /* ------------------------------ vues & scores ------------------------------ */
 
-  endMatch() {
-    const classement = [...this.players]
-      .map((p) => ({ id: p.id, pseudo: p.pseudo, score: this.totals[p.id] }))
+  scoreboard() {
+    return [...this.players]
+      .map((p) => ({ id: p.id, pseudo: p.pseudo, score: this.scores[p.id] }))
       .sort((a, b) => b.score - a.score);
-    this.finPartie = { classement };
-    this.phase = 'fin-partie';
-    const top = classement[0]?.score ?? 0;
-    const gagnants = classement.filter((p) => p.score === top).map((p) => p.pseudo);
-    this.say(gagnants.length > 1
-      ? `🏆 Égalité entre ${gagnants.join(', ')} avec ${top} point(s) !`
-      : `🏆 ${gagnants[0]} gagne avec ${top} point(s) !`);
-    return {
-      summary: gagnants.length > 1
-        ? `🙈 Cache-Cache terminé — égalité entre ${gagnants.join(', ')} (${top} pts).`
-        : `🙈 Cache-Cache terminé — ${gagnants[0]} gagne avec ${top} pts.`,
-      classement,
-      manches: this.roundNumber,
-    };
   }
 
-  /* ------------------------------ actions & vues ------------------------ */
-
-  handleAction(playerId, action = {}) {
-    switch (action.a) {
-      case 'pickMap': return this.pickMap(playerId, action.mapId);
-      case 'place': return this.placeShape(playerId, action);
-      case 'lock': return this.lockShape(playerId);
-      case 'huntClick': return this.huntClick(playerId, action.x, action.y);
-      default: return { ok: false, error: 'Action inconnue.' };
-    }
-  }
-
-  /** Vue publique + privée de la chasse en cours, adaptée au rôle du destinataire. */
-  buildHuntView(playerId) {
-    const t = this.currentTarget;
-    if (!t) return null;
-    const common = {
-      hiderId: t.hiderId, hiderName: this.pseudoOf(t.hiderId),
-      deadline: t.deadline, clicks: t.clicks, resolved: t.resolved, resultFlash: t.resultFlash,
-      lastClickColor: t.lastClick?.color ?? null, lastClickLabel: t.lastClick?.label ?? null,
-      huntIndex: this.huntIndex, huntTotal: this.huntQueue?.length ?? 0,
-    };
-    if (playerId === this.hunterId) {
-      return { ...common, role: 'hunter', mapId: t.mapId, lastClick: t.lastClick };
-    }
-    if (playerId === t.hiderId) {
-      return {
-        ...common, role: 'owner', mapId: t.mapId, shapeId: t.shapeId,
-        x: t.x, y: t.y, scale: t.scale, rotation: t.rotation, lastClick: t.lastClick,
-      };
-    }
-    return { ...common, role: 'bystander' };
-  }
-
-  /** Vue personnalisée : état public + ce que CE joueur a le droit de voir (jamais plus). */
   getViewFor(playerId) {
     const isHunter = playerId === this.hunterId;
-    const isHider = this.hiders.includes(playerId);
-
-    const view = {
-      phase: this.phase,
-      round: this.roundNumber,
-      totalRounds: this.n,
-      hunterId: this.hunterId,
-      hunterName: this.hunterId ? this.pseudoOf(this.hunterId) : null,
-      isHunter,
-      isHider,
-      players: this.players.map((p) => ({
-        id: p.id, pseudo: p.pseudo, score: this.totals[p.id],
-        isHunter: p.id === this.hunterId, hasHunted: this.huntedSet.has(p.id),
-      })),
-      phaseDeadline: this.phase === 'pick-map' || this.phase === 'hide' ? this.phaseDeadline
-        : this.phase === 'hunt' && this.currentTarget ? this.currentTarget.deadline : null,
-      mapsCount: MAPS_COUNT,
-      shapesCount: SHAPES_COUNT,
-      scaleRange: [SCALE_MIN, SCALE_MAX],
-      clickPenaltyMs: CLICK_PENALTY_MS,
-      proximityLevels: PROXIMITY_LEVELS.map(({ color, label }) => ({ color, label })),
-      finPartie: this.finPartie,
-      log: this.log.slice(-25),
+    const base = {
+      phase: this.phase, round: this.roundIndex + 1, totalRounds: this.n,
+      hunterId: this.hunterId, hunterPseudo: this.pseudoOf(this.hunterId), isHunter,
+      scores: this.scoreboard(), log: this.log.slice(-30),
     };
-
-    if (this.phase === 'pick-map' || this.phase === 'hide') {
-      view.hiderStatuses = this.hiders.map((id) => ({ id, pseudo: this.pseudoOf(id), status: this.selections.get(id).status }));
-      if (isHider) view.mySelection = { ...this.selections.get(playerId) };
+    if (this.phase === 'cache') {
+      if (isHunter) {
+        return {
+          ...base,
+          hidersStatus: this.hiderIds.map((id) => ({ id, pseudo: this.pseudoOf(id), locked: this.hiderStates[id].locked })),
+        };
+      }
+      return {
+        ...base,
+        mapId: this.mapId,
+        hiders: this.hiderIds.map((id) => ({ id, pseudo: this.pseudoOf(id), ...this.hiderStates[id] })),
+      };
     }
-
-    if (this.phase === 'hunt') view.hunt = this.buildHuntView(playerId);
-    if (this.phase === 'round-end') view.roundRecap = this.roundRecap;
-
-    return view;
+    if (this.phase === 'chasse' || this.phase === 'resultat-manche') {
+      return {
+        ...base,
+        mapId: this.mapId,
+        bullets: this.bullets,
+        hiders: this.hiderIds.map((id) => ({ id, pseudo: this.pseudoOf(id), ...this.hiderStates[id] })),
+        shots: this.shots,
+      };
+    }
+    return base; // 'fin'
   }
 }
 
-/* ====================================================================== */
-/* Interface (rendu pur à partir de la vue reçue)                         */
-/* ====================================================================== */
+/* ============================================================================================
+ * INTERFACE (DOM + Canvas + réseau)
+ * ========================================================================================== */
 
-const CSS = `
-.cachecache { display: grid; grid-template-columns: 1fr 300px; gap: 14px; height: 100%; min-height: 0; color: var(--text, #e8ecff); font-size: 0.95rem; width: 100%; }
-.cachecache__main { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
-.cachecache__panel { background: var(--glass, rgba(255,255,255,0.05)); border: 1px solid var(--glass-border, rgba(255,255,255,0.09)); border-radius: var(--radius-m, 14px); padding: 12px 14px; }
-.cachecache__bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.cachecache__bar .sep { opacity: 0.4; }
-.cachecache__timer { margin-left: auto; color: var(--accent-2, #29d3c2); font-weight: 700; font-variant-numeric: tabular-nums; }
-.cachecache__legend { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; font-size: 0.72rem; color: var(--text-dim, #aab); }
-.cachecache__legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 3px; vertical-align: middle; }
-.cachecache__lastclick { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; }
-.cachecache__lastclick .sw { width: 16px; height: 16px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.3); }
-.ccstage-wrap { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 320px; }
-.ccstage { position: relative; width: min(100%, 620px); aspect-ratio: 1 / 1; border-radius: 14px; overflow: hidden; border: 1px solid rgba(255,255,255,0.14); background-size: cover; background-position: center; cursor: crosshair; touch-action: none; outline-offset: 3px; }
-.ccstage:focus-visible { outline: 2px solid var(--accent-2, #29d3c2); }
-.ccstage--disabled { cursor: default; }
-.ccshape { position: absolute; pointer-events: none; filter: drop-shadow(0 6px 14px rgba(0,0,0,0.5)); }
-.ccshape img { width: 100%; height: 100%; object-fit: contain; display: block; }
-.cccursor { position: absolute; width: 22px; height: 22px; border: 2px solid #fff; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; box-shadow: 0 0 0 2px rgba(0,0,0,0.5); }
-.ccclick { position: absolute; width: 26px; height: 26px; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; border: 2px solid rgba(255,255,255,0.85); }
-.ccflash { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 8px; background: rgba(10,12,20,0.72); font-size: 1.3rem; font-weight: 700; text-align: center; padding: 12px; }
-.ccgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
-.ccthumb { position: relative; border-radius: 10px; overflow: hidden; border: 2px solid transparent; background-size: cover; background-position: center; aspect-ratio: 1/1; cursor: pointer; padding: 0; }
-.ccthumb--selected { border-color: var(--accent-2, #29d3c2); }
-.ccthumb--shape { background-color: rgba(255,255,255,0.04); background-size: 70%; background-repeat: no-repeat; background-position: center; }
-.cachecache__actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; justify-content: center; }
-.cachecache__sliders { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; justify-content: center; font-size: 0.82rem; }
-.cachecache__sliders label { display: flex; flex-direction: column; gap: 4px; align-items: center; }
-.cachecache__waiting { display: flex; flex-direction: column; gap: 10px; align-items: center; justify-content: center; text-align: center; padding: 24px 10px; }
-.cachecache__hiderlist { display: flex; flex-direction: column; gap: 4px; width: 100%; max-width: 360px; }
-.cachecache__hiderlist div { display: flex; justify-content: space-between; padding: 4px 8px; border-radius: 8px; background: rgba(255,255,255,0.04); font-size: 0.85rem; }
-.cachecache__side { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow: auto; }
-.cachecache__player { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-bottom: 1px solid rgba(255,255,255,0.06); }
-.cachecache__player--hunter { color: var(--accent-2, #29d3c2); }
-.cachecache__player .tag { font-size: 0.68rem; padding: 2px 6px; border-radius: 99px; background: rgba(124,92,255,0.25); }
-.cachecache__player .pts { margin-left: auto; font-variant-numeric: tabular-nums; }
-.cachecache__log { font-size: 0.8rem; color: var(--text-dim, #aab); max-height: 160px; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
-.cachecache__status { min-height: 1.2em; color: var(--warning, #ffb454); font-size: 0.85rem; text-align: center; }
-.cachecache__chat { display: flex; flex-direction: column; gap: 8px; }
-.cachecache__chatlist { display: flex; flex-direction: column; gap: 4px; max-height: 200px; overflow-y: auto; font-size: 0.82rem; }
-.cachecache__chatmsg { line-height: 1.3; word-break: break-word; }
-.cachecache__chatauthor { color: var(--accent-2, #29d3c2); font-weight: 600; }
-.cachecache__chatrow { display: flex; gap: 6px; }
-.cachecache__chatinput { flex: 1; min-width: 0; padding: 6px 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.04); color: inherit; font-family: inherit; font-size: 0.85rem; }
-.cachecache table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-.cachecache td, .cachecache th { padding: 4px 8px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.07); }
-@media (max-width: 1000px) { .cachecache { grid-template-columns: 1fr; } }
-`;
-
-/** Petite fabrique DOM locale (le module est autonome, sans import du cœur). */
 function h(tag, props = {}, children = []) {
   const node = document.createElement(tag);
   Object.entries(props).forEach(([k, v]) => {
-    if (v === undefined || v === null) return;
+    if (v === undefined || v === null || v === false) return;
     if (k === 'className') node.className = v;
     else if (k === 'style') node.style.cssText = v;
     else if (k.startsWith('on')) node.addEventListener(k.slice(2).toLowerCase(), v);
-    else node.setAttribute(k, v);
+    else node.setAttribute(k, v === true ? '' : v);
   });
   (Array.isArray(children) ? children : [children]).forEach((c) => {
-    node.append(typeof c === 'string' ? document.createTextNode(c) : c);
+    if (c === null || c === undefined || c === false) return;
+    node.append(typeof c === 'string' || typeof c === 'number' ? document.createTextNode(String(c)) : c);
   });
   return node;
 }
 
-function fmtSecs(msRemaining) {
-  const s = Math.max(0, Math.ceil(msRemaining / 1000));
-  return `${s}s`;
+function mapUrl(id) { return `/games/cache-cache/assets/maps/${id}.png`; }
+
+function drawImageCover(ctx, img, size) {
+  const scale = Math.max(size / img.width, size / img.height);
+  const w = img.width * scale; const hgt = img.height * scale;
+  ctx.drawImage(img, (size - w) / 2, (size - hgt) / 2, w, hgt);
 }
+
+function roundRectPath(ctx, x, y, w, hgt, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + hgt, r);
+  ctx.arcTo(x + w, y + hgt, x, y + hgt, r);
+  ctx.arcTo(x, y + hgt, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function drawCharacter(ctx, size, x, y, color, { locked = false, found = false, dim = false } = {}) {
+  const cx = x * size; const cy = y * size;
+  const r = size * 0.028;
+  const bodyW = r * 1.7; const bodyH = r * 2.6;
+  ctx.save();
+  ctx.globalAlpha = dim ? 0.55 : 1;
+  ctx.fillStyle = found ? 'rgba(140,140,150,0.5)' : color;
+  ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+  ctx.lineWidth = Math.max(1, size * 0.0022);
+  roundRectPath(ctx, cx - bodyW / 2, cy - r * 0.3, bodyW, bodyH, bodyW / 2);
+  ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx, cy - r * 1.5, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  if (found) {
+    ctx.strokeStyle = '#ff3d5a'; ctx.lineWidth = size * 0.006;
+    ctx.beginPath(); ctx.moveTo(cx - r * 1.4, cy - r * 2.6); ctx.lineTo(cx + r * 1.4, cy + r * 0.6); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx + r * 1.4, cy - r * 2.6); ctx.lineTo(cx - r * 1.4, cy + r * 0.6); ctx.stroke();
+  } else if (locked) {
+    ctx.fillStyle = '#ffd166';
+    ctx.font = `${Math.round(size * 0.045)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('🔒', cx, cy - r * 3.1);
+  }
+  ctx.restore();
+}
+
+function drawSplat(ctx, size, x, y, hit) {
+  const cx = x * size; const cy = y * size;
+  const r = size * HIT_RADIUS_VISUAL;
+  ctx.save();
+  ctx.fillStyle = hit ? 'rgba(255,61,90,0.85)' : 'rgba(255,255,255,0.85)';
+  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+  ctx.lineWidth = Math.max(1, size * 0.0018);
+  ctx.beginPath();
+  const bumps = 9;
+  for (let i = 0; i <= bumps; i++) {
+    const a = (i / bumps) * Math.PI * 2;
+    const rr = r * (0.78 + 0.22 * Math.sin(a * 3.1 + x * 37 + y * 19));
+    const px = cx + Math.cos(a) * rr; const py = cy + Math.sin(a) * rr;
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+const HIT_RADIUS_VISUAL = HIT_RADIUS * 1.05;
+
+function drawCrosshair(ctx, size, x, y) {
+  const cx = x * size; const cy = y * size; const r = size * 0.028;
+  ctx.save();
+  ctx.strokeStyle = '#ff3d5a'; ctx.lineWidth = Math.max(1.5, size * 0.003);
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx - r * 1.6, cy); ctx.lineTo(cx + r * 1.6, cy); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx, cy - r * 1.6); ctx.lineTo(cx, cy + r * 1.6); ctx.stroke();
+  ctx.restore();
+}
+
+function fmtChatTime(ts) { return new Date(ts).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }); }
+function fmtCountdown(ms) { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
+
+const STAGE_SIZE = 900; // résolution interne du canevas (indépendante de la taille CSS affichée)
 
 class CacheCacheUI {
   constructor(container, context) {
@@ -483,68 +304,68 @@ class CacheCacheUI {
     this.ctx = context;
     this.isHost = context.me.id === context.hostId;
     this.engine = null;
-    this.unsubscribe = null;
-    this.cursor = { x: 0.5, y: 0.5 };
-    this.chatLog = [];
     this.view = null;
-    this.lastStageKey = null;
+    this.chatLog = [];
+    this.mode = 'deplacer';
+    this.myColor = DEFAULT_COLOR;
+    this.myLocked = false;
+    this.otherHiders = new Map();
+    this.hunterCursor = null;
+    this.mapImage = null;
+    this.mapImageId = null;
+    this._mapLoading = null;
+    this._lastMoveSentAt = 0;
+    this._lastCursorSentAt = 0;
+    this.unsubscribe = null;
+    this.phaseTimer = null;
+    this.tickTimer = null;
+    this.phaseDeadline = null;
   }
+
+  /* ============================== CONTRAT DU MODULE ============================== */
 
   mount() {
     this.styleEl = h('style', {}, CSS);
-    this.root = h('div', { className: 'cachecache' });
+    this.root = h('div', { className: 'cc' });
     this.container.append(this.styleEl, this.root);
-
+    this.unsubscribe = this.ctx.onMessage(({ from, data }) => this.onMessage(from, data));
     if (this.isHost) {
-      try {
-        this.engine = new CacheCacheEngine(this.ctx.players);
-      } catch (error) {
-        this.renderMessage(`⚠️ ${error.message}`);
-        return;
-      }
-      this.unsubscribe = this.ctx.onMessage(({ from, data }) => this.handleIncoming(from, data));
-      this.engine.startRound();
-      this.broadcast();
-      this.schedulePhaseTimer();
+      try { this.engine = new CacheCacheEngine(this.ctx.players); }
+      catch (err) { this.renderMessage(`⚠️ ${err.message}`); return; }
+      this.beginCachePhase();
     } else {
-      this.unsubscribe = this.ctx.onMessage(({ from, data }) => this.handleIncoming(from, data));
-      this.renderMessage('⏳ Connexion à la partie du Host…');
+      this.renderMessage('⏳ Connexion à la partie…');
     }
-
-    this.tickInterval = setInterval(() => {
-      if (this.view && (this.view.phaseDeadline || this.view.hunt?.deadline)) this.render(this.view);
-    }, 1000);
   }
 
-  handleIncoming(from, data) {
+  unmount() {
+    this.unsubscribe?.();
+    clearTimeout(this.phaseTimer);
+    clearInterval(this.tickTimer);
+    this.styleEl?.remove();
+    this.root?.remove();
+  }
+
+  renderMessage(text) {
+    this.root.replaceChildren(h('div', { className: 'cc__panel', style: 'margin:auto;max-width:420px;text-align:center;' }, text));
+  }
+
+  /* ============================== RÉSEAU ============================== */
+
+  onMessage(from, data) {
     if (!data) return;
-    if (data.t === 'chat') { this.addChatMessage(data.message, { fromRemote: true }); return; }
+    if (data.t === 'chat') { this.receiveChat(from, data); return; }
     if (this.isHost) {
       if (data.t === 'action') this.hostHandle(from, data.action);
       return;
     }
-    if (from !== this.ctx.hostId) return; // vues/erreurs de jeu : uniquement depuis le Host
-    if (data.t === 'view') this.render(data.view);
+    if (from !== this.ctx.hostId) return;
+    if (data.t === 'view') this.applyView(data.view);
+    else if (data.t === 'hiderPatch') this.applyHiderPatch(data.patch);
+    else if (data.t === 'cursor') this.applyCursor(data);
+    else if (data.t === 'shot') this.applyShot(data.shot);
     else if (data.t === 'error') this.setStatus(data.message);
-  }
-
-  /* -------- côté Host : moteur, minuteries et diffusion des vues -------- */
-
-  hostHandle(playerId, action) {
-    const result = this.engine.handleAction(playerId, action);
-    if (!result.ok) {
-      this.ctx.sendMessage({ t: 'error', message: result.error }, playerId);
-      return;
-    }
-    this.broadcast();
-
-    if (action.a === 'huntClick') {
-      if (result.hit) { clearTimeout(this.huntTimer); this.scheduleTransition(); }
-      else this.scheduleHuntTimer(); // le délai a changé (pénalité), on reprogramme
-      return;
-    }
-    // pickMap / place / lock peuvent déclencher une transition de phase anticipée.
-    this.schedulePhaseTimer();
+    else if (data.t === 'gameEnd') { clearInterval(this.tickTimer); this.ctx.onEnd(data.info); }
   }
 
   act(action) {
@@ -552,509 +373,540 @@ class CacheCacheUI {
     else this.ctx.sendMessage({ t: 'action', action }, this.ctx.hostId);
   }
 
-  clearTimers() {
+  /* -------- Host : orchestration des phases -------- */
+
+  beginCachePhase() {
+    this.otherHiders = new Map();
+    this.mapImageId = null;
+    this.broadcastViews();
     clearTimeout(this.phaseTimer);
-    clearTimeout(this.huntTimer);
-    clearTimeout(this.transitionTimer);
-    clearTimeout(this.endTimer);
+    this.phaseDeadline = Date.now() + HIDE_DURATION_MS;
+    this.phaseTimer = setTimeout(() => this.forceBeginHunt(), HIDE_DURATION_MS);
+    this.startTicker();
   }
 
-  schedulePhaseTimer() {
+  forceBeginHunt() {
+    if (!this.engine || this.engine.phase !== 'cache') return;
+    this.engine.beginHunt();
+    this.broadcastViews();
     clearTimeout(this.phaseTimer);
-    clearTimeout(this.huntTimer);
-    if (this.engine.phase === 'pick-map') {
-      const delay = Math.max(0, this.engine.phaseDeadline - Date.now());
-      this.phaseTimer = setTimeout(() => {
-        this.engine.forceAdvanceFromPickMap();
-        this.broadcast();
-        this.schedulePhaseTimer();
-      }, delay);
-    } else if (this.engine.phase === 'hide') {
-      const delay = Math.max(0, this.engine.phaseDeadline - Date.now());
-      this.phaseTimer = setTimeout(() => {
-        this.engine.forceAdvanceFromHide();
-        this.broadcast();
-        this.schedulePhaseTimer();
-      }, delay);
-    } else if (this.engine.phase === 'hunt') {
-      this.scheduleHuntTimer();
-    } else if (this.engine.phase === 'round-end') {
-      this.phaseTimer = setTimeout(() => {
-        if (this.engine.huntedSet.size >= this.engine.n) {
-          this.finishMatch();
-        } else {
-          this.engine.startRound();
-          this.broadcast();
-          this.schedulePhaseTimer();
-        }
-      }, ROUND_RECAP_MS);
+    this.phaseDeadline = Date.now() + HUNT_DURATION_MS;
+    this.phaseTimer = setTimeout(() => this.forceEndHunt(), HUNT_DURATION_MS);
+  }
+
+  forceEndHunt() {
+    if (!this.engine || this.engine.phase !== 'chasse') return;
+    this.engine.endHunt();
+    this.broadcastViews();
+    this.scheduleNextRound();
+  }
+
+  scheduleNextRound() {
+    clearTimeout(this.phaseTimer);
+    this.phaseDeadline = null;
+    this.phaseTimer = setTimeout(() => {
+      this.engine.advanceRound();
+      if (this.engine.phase === 'fin') {
+        this.broadcastViews();
+        clearInterval(this.tickTimer);
+        this.endTimer = setTimeout(() => this.finalizeGame(), 8000);
+      } else this.beginCachePhase();
+    }, 4000);
+  }
+
+  /** Notifie TOUS les joueurs (pas seulement l'Host) afin que chacun appelle son propre
+   * ctx.onEnd() — sinon seul le navigateur de l'Host retournerait au salon. */
+  finalizeGame() {
+    if (this._finalized) return;
+    this._finalized = true;
+    clearTimeout(this.phaseTimer); clearInterval(this.tickTimer); clearTimeout(this.endTimer);
+    const info = { scores: this.engine.scoreboard() };
+    for (const p of this.ctx.players) {
+      if (p.id === this.ctx.me.id) continue;
+      this.ctx.sendMessage({ t: 'gameEnd', info }, p.id);
     }
+    this.ctx.onEnd(info);
   }
 
-  scheduleHuntTimer() {
-    clearTimeout(this.huntTimer);
-    const target = this.engine.currentTarget;
-    if (!target || target.resolved) return;
-    const delay = Math.max(0, target.deadline - Date.now());
-    this.huntTimer = setTimeout(() => {
-      this.engine.resolveTimeout();
-      this.broadcast();
-      this.scheduleTransition();
-    }, delay);
+  startTicker() {
+    clearInterval(this.tickTimer);
+    this.tickTimer = setInterval(() => { if (this.view) this.updateCountdownUI(); }, 250);
   }
 
-  scheduleTransition() {
-    clearTimeout(this.transitionTimer);
-    this.transitionTimer = setTimeout(() => {
-      this.engine.nextHuntTarget();
-      this.broadcast();
-      this.schedulePhaseTimer();
-    }, TRANSITION_MS);
-  }
-
-  finishMatch() {
-    const result = this.engine.endMatch();
-    this.broadcast();
-    this.endTimer = setTimeout(() => this.ctx.onEnd(result), 4500);
-  }
-
-  confirmEnd() {
-    this.clearTimers();
-    this.finishMatch();
-  }
-
-  broadcast() {
-    for (const p of this.engine.players) {
+  broadcastViews() {
+    for (const p of this.ctx.players) {
       if (p.id === this.ctx.me.id) continue;
       this.ctx.sendMessage({ t: 'view', view: this.engine.getViewFor(p.id) }, p.id);
     }
-    this.render(this.engine.getViewFor(this.ctx.me.id));
+    this.applyView(this.engine.getViewFor(this.ctx.me.id));
   }
 
-  /* -------- chat (indépendant du moteur, diffusion façon Memory) -------- */
+  broadcastHiderPatch(senderId, state) {
+    const patch = { id: senderId, ...state };
+    for (const id of this.engine.hiderIds) {
+      if (id === senderId) continue;
+      if (id === this.ctx.me.id) { this.applyHiderPatch(patch); continue; }
+      this.ctx.sendMessage({ t: 'hiderPatch', patch }, id);
+    }
+  }
 
-  sendChatMessage(text) {
-    text = text.trim();
+  broadcastCursor(x, y) {
+    for (const id of this.engine.hiderIds) {
+      if (id === this.ctx.me.id) { this.applyCursor({ x, y }); continue; }
+      this.ctx.sendMessage({ t: 'cursor', x, y }, id);
+    }
+  }
+
+  broadcastShot(shot) {
+    for (const p of this.ctx.players) {
+      if (p.id === this.ctx.me.id) { this.applyShot(shot); continue; }
+      this.ctx.sendMessage({ t: 'shot', shot }, p.id);
+    }
+  }
+
+  hostHandle(playerId, action) {
+    if (!action) return;
+    if (action.a === 'updateHiderState') {
+      const r = this.engine.updateHiderState(playerId, action.patch ?? {});
+      if (!r.ok) { this.sendErrorTo(playerId, r.error); return; }
+      this.broadcastHiderPatch(playerId, r.state);
+      if (this.engine.allHidersLocked()) this.forceBeginHunt();
+    } else if (action.a === 'shoot') {
+      const r = this.engine.shoot(playerId, action.x, action.y);
+      if (!r.ok) { this.sendErrorTo(playerId, r.error); return; }
+      this.broadcastShot(r.shot);
+      if (r.roundOver) { clearTimeout(this.phaseTimer); this.broadcastViews(); this.scheduleNextRound(); }
+    } else if (action.a === 'cursor') {
+      this.broadcastCursor(action.x, action.y);
+    } else if (action.a === 'endGameNow' && playerId === this.ctx.hostId) {
+      this.finalizeGame();
+    }
+  }
+
+  sendErrorTo(playerId, message) {
+    if (playerId === this.ctx.me.id) this.setStatus(message);
+    else this.ctx.sendMessage({ t: 'error', message }, playerId);
+  }
+
+  /* ============================== CHAT (même schéma que Tarot / Échecs) ============================== */
+
+  ensureChatPanel() {
+    if (this.chatPanel) return this.chatPanel;
+    this.chatEmptyEl = h('div', { className: 'cc__chat-empty' }, 'Aucun message pour l\'instant.');
+    this.chatMessagesEl = h('div', { className: 'cc__chat-messages', tabindex: '0', 'aria-label': 'Messages de la partie' }, [this.chatEmptyEl]);
+    this.chatInput = h('input', { type: 'text', placeholder: 'Écrire un message…', maxlength: '300', 'aria-label': 'Votre message' });
+    const form = h('form', { className: 'cc__chat-form' }, [this.chatInput, h('button', { className: 'btn btn--primary btn--small', type: 'submit' }, 'Envoyer')]);
+    form.addEventListener('submit', (e) => { e.preventDefault(); this.sendChat(); });
+    this.chatPanel = h('div', { className: 'cc__panel cc__chat' }, [h('strong', {}, '💬 Chat'), this.chatMessagesEl, form]);
+    return this.chatPanel;
+  }
+
+  sendChat() {
+    const text = this.chatInput.value.trim();
     if (!text) return;
-    const message = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      playerId: this.ctx.me.id,
-      pseudo: this.ctx.me.pseudo ?? '?',
-      text: text.slice(0, 300),
-      at: Date.now(),
-    };
-    this.addChatMessage(message, { fromRemote: false });
-    this.ctx.sendMessage({ t: 'chat', message });
+    this.appendChatMessage({ pseudo: this.ctx.me.pseudo, avatar: this.ctx.me.avatar, color: this.ctx.me.color, at: Date.now(), text });
+    this.ctx.sendMessage({ t: 'chat', text }, null);
+    this.chatInput.value = '';
+    this.chatInput.focus();
   }
 
-  addChatMessage(message, { fromRemote } = {}) {
-    if (fromRemote && message.playerId === this.ctx.me.id) return;
-    this.chatLog.push(message);
-    if (this.chatLog.length > 100) this.chatLog.shift();
-    if (this.view) this.render(this.view);
+  receiveChat(from, data) {
+    const text = String(data?.text ?? '').slice(0, 500).trim();
+    if (!text) return;
+    const player = this.ctx.players.find((p) => p.id === from);
+    this.appendChatMessage({ pseudo: player?.pseudo ?? '?', avatar: player?.avatar ?? '❔', color: player?.color, at: Date.now(), text });
   }
 
-  /* -------- rendu -------- */
-
-  setStatus(message) {
-    if (!this.statusEl) return;
-    this.statusEl.textContent = message ?? '';
-    clearTimeout(this.statusTimer);
-    this.statusTimer = setTimeout(() => { if (this.statusEl) this.statusEl.textContent = ''; }, 3500);
+  appendChatMessage(message) {
+    this.ensureChatPanel();
+    if (this.chatEmptyEl) { this.chatEmptyEl.remove(); this.chatEmptyEl = null; }
+    const list = this.chatMessagesEl;
+    const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 60;
+    list.append(h('div', { className: 'cc__chat-msg' }, [
+      h('span', { className: 'cc__chat-msg__avatar', 'aria-hidden': 'true' }, message.avatar ?? '🙈'),
+      h('div', {}, [
+        h('div', { className: 'cc__chat-msg__head' }, [
+          h('span', { className: 'cc__chat-msg__pseudo', style: message.color ? `color:${message.color};` : '' }, message.pseudo),
+          h('span', { className: 'cc__chat-msg__time' }, fmtChatTime(message.at)),
+        ]),
+        h('p', { className: 'cc__chat-msg__text' }, message.text),
+      ]),
+    ]));
+    if (nearBottom) list.scrollTop = list.scrollHeight;
   }
 
-  renderMessage(text) {
-    this.root.replaceChildren(h('div', { className: 'cachecache__panel', style: 'margin:auto;' }, text));
-  }
+  setStatus(text) { if (this.statusEl) { this.statusEl.textContent = text ?? ''; } }
 
-  resetCursorForStage(key, initial) {
-    if (this.lastStageKey !== key) {
-      this.lastStageKey = key;
-      this.cursor = initial ?? { x: 0.5, y: 0.5 };
-    }
-  }
+  /* ============================== DISPATCH DE VUE ============================== */
 
-  render(view) {
+  applyView(view) {
     this.view = view;
+    if (view.phase === 'cache') {
+      if (view.isHunter) this.renderHunterWaiting(view);
+      else this.renderHideStage(view);
+    } else if (view.phase === 'chasse') {
+      this.renderHuntStage(view);
+    } else if (view.phase === 'resultat-manche') {
+      this.renderRoundResult(view);
+    } else if (view.phase === 'fin') {
+      this.renderFinal(view);
+    }
+  }
 
-    const bar = this.renderBar(view);
-    const main = h('div', { className: 'cachecache__panel' });
-    this.statusEl = h('div', { className: 'cachecache__status' });
+  applyHiderPatch(patch) {
+    if (!patch || patch.id === this.ctx.me.id) return;
+    this.otherHiders.set(patch.id, { ...(this.otherHiders.get(patch.id) ?? {}), ...patch });
+    this.redrawHideStage();
+  }
 
-    if (view.phase === 'pick-map') main.append(...this.renderPickMap(view));
-    else if (view.phase === 'hide') main.append(...this.renderHide(view));
-    else if (view.phase === 'hunt') main.append(...this.renderHunt(view));
-    else if (view.phase === 'round-end') main.append(...this.renderRoundEnd(view));
-    else if (view.phase === 'fin-partie') main.append(...this.renderFinPartie(view));
+  applyCursor({ x, y }) {
+    this.hunterCursor = { x, y };
+    if (this.view?.phase === 'chasse') this.redrawHuntStage();
+  }
 
-    const side = h('div', { className: 'cachecache__side' }, [
-      h('div', { className: 'cachecache__panel' }, [
-        h('strong', {}, '🏆 Scores'),
-        ...view.players.map((p) => h('div', { className: `cachecache__player${p.isHunter ? ' cachecache__player--hunter' : ''}` }, [
-          h('span', {}, p.pseudo),
-          ...(p.isHunter ? [h('span', { className: 'tag' }, 'Chasseur')] : []),
-          ...(p.hasHunted && !p.isHunter ? [h('span', { className: 'tag' }, 'A chassé')] : []),
-          h('span', { className: 'pts' }, `${p.score} pt${p.score > 1 ? 's' : ''}`),
-        ])),
+  applyShot(shot) {
+    if (!shot) return;
+    this.huntShots = this.huntShots ? [...this.huntShots, shot] : [shot];
+    if (this.huntHiders && shot.hit && shot.hiderId && this.huntHiders.has(shot.hiderId)) {
+      this.huntHiders.set(shot.hiderId, { ...this.huntHiders.get(shot.hiderId), found: true });
+    }
+    if (this.view) this.view.bullets = shot.bulletsLeft;
+    const bulletsEl = this.root.querySelector?.('.cc__bullets');
+    if (bulletsEl && this.view) bulletsEl.textContent = `🔫 ${this.view.bullets} munition${this.view.bullets > 1 ? 's' : ''}`;
+    if (this.view?.phase === 'chasse') this.redrawHuntStage();
+    this.setStatus(shot.hit ? '🎯 Touché !' : '💦 Raté…');
+  }
+
+  /* ============================== STRUCTURE COMMUNE (en-tête, scores, chat, contrôles) ============================== */
+
+  renderShell(mainNode, { subtitle } = {}) {
+    const header = h('div', { className: 'cc__header' }, [
+      h('div', { className: 'cc__title' }, [
+        `🙈 Manche ${this.view.round}/${this.view.totalRounds}`,
+        subtitle ? h('span', { className: 'cc__subtitle' }, subtitle) : null,
       ]),
-      h('div', { className: 'cachecache__panel' }, [
-        h('strong', {}, 'Mon statut'),
-        h('div', { style: 'margin-top:6px;font-size:0.85rem;color:var(--text-dim,#aab);' }, this.myStatusText(view)),
-      ]),
-      this.renderChatPanel(),
-      h('div', { className: 'cachecache__panel' }, [
-        h('strong', {}, 'Historique'),
-        h('div', { className: 'cachecache__log' }, [...view.log].reverse().map((l) => h('div', {}, l))),
-      ]),
-      ...(this.isHost && view.phase !== 'fin-partie'
-        ? [h('button', { className: 'btn btn--ghost btn--small', onClick: () => this.confirmEnd() }, '🛑 Terminer la partie')]
-        : []),
+      this.timerEl = h('div', { className: 'cc__timer' }),
     ]);
-
-    this.root.replaceChildren(h('div', { className: 'cachecache__main' }, [bar, main, this.statusEl]), side);
-  }
-
-  myStatusText(view) {
-    if (view.phase === 'fin-partie') return 'Partie terminée.';
-    if (view.isHunter) return '🔦 Vous êtes le Chasseur ce tour-ci.';
-    if (view.phase === 'hunt' && view.hunt?.role === 'owner') return '👀 On fouille votre carte en ce moment !';
-    if (view.isHider) {
-      const sel = view.mySelection;
-      if (sel?.locked) return '🔒 Cachette verrouillée, en attente des autres.';
-      if (view.phase === 'hide') return '🎭 Choisissez et placez votre forme.';
-      if (view.phase === 'pick-map') return '🗺️ Choisissez votre carte.';
-    }
-    return 'En attente…';
-  }
-
-  renderBar(view) {
-    const nodes = [
-      h('strong', {}, `🙈 Cache-Cache — manche ${view.round || '—'}/${view.totalRounds}`),
-      h('span', { className: 'sep' }, '·'),
-      h('span', {}, `Chasseur : ${view.hunterName ?? '—'}`),
-    ];
-    if (view.phase === 'hunt' && view.hunt) {
-      nodes.push(
-        h('span', { className: 'sep' }, '·'),
-        h('span', {}, `Cible : ${view.hunt.hiderName} (${view.hunt.huntIndex + 1}/${view.hunt.huntTotal})`),
-        h('span', { className: 'sep' }, '·'),
-        h('span', {}, `Clics : ${view.hunt.clicks}`),
-      );
-    }
-    const deadline = view.phaseDeadline;
-    if (deadline) {
-      nodes.push(h('span', { className: 'cachecache__timer' }, fmtSecs(deadline - Date.now())));
-    }
-    return h('div', { className: 'cachecache__panel cachecache__bar' }, nodes);
-  }
-
-  renderLegend(view) {
-    return h('div', { className: 'cachecache__legend' }, [
-      h('span', {}, `Chaque clic = -${Math.round((view.clickPenaltyMs ?? 3000) / 1000)}s ·`),
-      ...(view.proximityLevels ?? []).slice().reverse().map((l) => h('span', {}, [
-        h('span', { className: 'sw', style: `background:${l.color};` }),
-        l.label,
-      ])),
+    const side = h('div', { className: 'cc__side' }, [
+      h('div', { className: 'cc__panel' }, [h('strong', {}, '🏆 Scores'), this.buildScoreTable(this.view.scores)]),
+      this.ensureChatPanel(),
     ]);
+    this.statusEl = h('div', { className: 'cc__status' });
+    this.root.replaceChildren(header, h('div', { className: 'cc__layout' }, [mainNode, side]), this.statusEl, this.buildControls());
+    this.updateCountdownUI();
   }
 
-  renderLastClick(view) {
-    if (!view.hunt?.lastClickColor) return h('div', {});
-    return h('div', { className: 'cachecache__lastclick' }, [
-      h('span', { className: 'sw', style: `background:${view.hunt.lastClickColor};` }),
-      h('span', {}, view.hunt.lastClickLabel ?? ''),
-    ]);
-  }
-
-  /* -------- phase 1 : choix de carte -------- */
-
-  renderPickMap(view) {
-    if (view.isHunter) return this.renderHunterWaiting(view, '🗺️ Les autres joueurs choisissent leur carte…');
-    const sel = view.mySelection;
-    const grid = h('div', { className: 'ccgrid' },
-      Array.from({ length: view.mapsCount }, (_, i) => i + 1).map((id) => h('button', {
-        type: 'button',
-        className: `ccthumb${sel?.mapId === id ? ' ccthumb--selected' : ''}`,
-        style: `background-image:url('${MAP_SRC(id)}');`,
-        'aria-label': `Carte ${id}`,
-        'aria-pressed': sel?.mapId === id ? 'true' : 'false',
-        onClick: () => this.act({ a: 'pickMap', mapId: id }),
-      })));
-    return [
-      h('div', {}, 'Choisissez la carte sur laquelle vous allez vous cacher.'),
-      grid,
-    ];
-  }
-
-  /* -------- phase 2 : cache -------- */
-
-  renderHide(view) {
-    if (view.isHunter) return this.renderHunterWaiting(view, '🎭 Les autres joueurs se cachent…');
-    const sel = view.mySelection;
-    if (sel.locked) {
-      return [
-        h('div', { className: 'cachecache__waiting' }, [
-          h('div', {}, '🔒 Cachette verrouillée !'),
-          h('div', { style: 'color:var(--text-dim,#aab);font-size:0.85rem;' }, 'En attente des autres joueurs…'),
-          ...this.renderHiderStatuses(view),
-        ]),
-      ];
-    }
-
-    this.resetCursorForStage(`hide-${sel.mapId}`, sel.x != null ? { x: sel.x, y: sel.y } : { x: 0.5, y: 0.5 });
-
-    const commit = (x, y) => {
-      this.act({ a: 'place', shapeId: sel.shapeId ?? 1, x, y, scale: sel.scale ?? 1, rotation: sel.rotation ?? 0 });
-    };
-
-    const stage = this.buildStage({
-      backgroundSrc: MAP_SRC(sel.mapId),
-      disabled: false,
-      onPick: (x, y) => { this.cursor = { x, y }; commit(x, y); },
-      overlay: sel.shapeId ? [h('div', {
-        className: 'ccshape',
-        style: `left:${(sel.x ?? 0.5) * 100}%; top:${(sel.y ?? 0.5) * 100}%; width:${18 * (sel.scale ?? 1)}%; transform: translate(-50%,-50%) rotate(${sel.rotation ?? 0}deg);`,
-      }, h('img', { src: SHAPE_SRC(sel.shapeId), alt: '' }))] : [],
-    });
-
-    const shapeGrid = h('div', { className: 'ccgrid' },
-      Array.from({ length: view.shapesCount }, (_, i) => i + 1).map((id) => h('button', {
-        type: 'button',
-        className: `ccthumb ccthumb--shape${sel.shapeId === id ? ' ccthumb--selected' : ''}`,
-        style: `background-image:url('${SHAPE_SRC(id)}');`,
-        'aria-label': `Forme ${id}`,
-        'aria-pressed': sel.shapeId === id ? 'true' : 'false',
-        onClick: () => this.act({ a: 'place', shapeId: id, x: sel.x ?? this.cursor.x, y: sel.y ?? this.cursor.y, scale: sel.scale ?? 1, rotation: sel.rotation ?? 0 }),
-      })));
-
-    const scaleInput = h('input', {
-      type: 'range', min: String(SCALE_MIN), max: String(SCALE_MAX), step: '0.05', value: String(sel.scale ?? 1),
-    });
-    scaleInput.addEventListener('change', () => this.act({
-      a: 'place', shapeId: sel.shapeId ?? 1, x: sel.x ?? this.cursor.x, y: sel.y ?? this.cursor.y,
-      scale: Number(scaleInput.value), rotation: sel.rotation ?? 0,
-    }));
-
-    const rotInput = h('input', { type: 'range', min: '0', max: '359', step: '15', value: String(sel.rotation ?? 0) });
-    rotInput.addEventListener('change', () => this.act({ a: 'place', shapeId: sel.shapeId ?? 1, x: sel.x ?? this.cursor.x, y: sel.y ?? this.cursor.y, scale: sel.scale ?? 1, rotation: Number(rotInput.value) }));
-
-    return [
-      h('div', {}, '1. Choisissez une forme · 2. Cliquez (ou touchez / flèches + Entrée) sur la carte pour la placer · 3. Ajustez, puis verrouillez.'),
-      shapeGrid,
-      h('div', { className: 'ccstage-wrap' }, stage),
-      h('div', { className: 'cachecache__sliders' }, [
-        h('label', {}, ['Taille', scaleInput]),
-        h('label', {}, ['Rotation', rotInput]),
-      ]),
-      h('div', { className: 'cachecache__actions' }, [
-        h('button', {
-          className: 'btn btn--primary',
-          disabled: sel.shapeId == null ? 'true' : undefined,
-          onClick: () => this.act({ a: 'lock' }),
-        }, '🔒 Verrouiller ma cachette'),
-      ]),
-    ];
-  }
-
-  renderHiderStatuses(view) {
-    return [h('div', { className: 'cachecache__hiderlist' }, (view.hiderStatuses ?? []).map((s) => h('div', {}, [
-      h('span', {}, s.pseudo), h('span', {}, STATUS_LABEL[s.status] ?? s.status),
-    ])))];
-  }
-
-  renderHunterWaiting(view, title) {
-    return [
-      h('div', { className: 'cachecache__waiting' }, [
-        h('div', { style: 'font-size:1.1rem;' }, title),
-        h('div', { style: 'color:var(--text-dim,#aab);font-size:0.85rem;max-width:420px;' },
-          `Pendant ce temps : rappel des règles de la chasse — chaque clic vous coûte ${Math.round(view.clickPenaltyMs / 1000)} secondes, `
-          + 'et une pastille de couleur vous indique votre proximité avec la cachette (bleu clair = très loin, jusqu\'à rouge = brûlant).'),
-        this.renderLegend(view),
-        ...this.renderHiderStatuses(view),
-      ]),
-    ];
-  }
-
-  /* -------- phase 3 : chasse -------- */
-
-  renderHunt(view) {
-    const hunt = view.hunt;
-    if (!hunt) return [h('div', {}, 'Préparation de la chasse…')];
-
-    if (hunt.resolved) {
-      const won = hunt.resultFlash?.type === 'hit';
-      return [
-        h('div', { className: 'ccstage-wrap' }, h('div', { className: 'ccstage ccstage--disabled', style: hunt.mapId ? `background-image:url('${MAP_SRC(hunt.mapId)}');` : '' }, [
-          h('div', { className: 'ccflash' }, [
-            h('div', {}, won ? `🎯 ${view.hunterName} a trouvé ${hunt.hiderName} !` : `⏱️ Temps écoulé — ${hunt.hiderName} marque un point !`),
-            h('div', { style: 'font-size:0.85rem;color:var(--text-dim,#aab);font-weight:400;' }, 'Prochaine cachette dans un instant…'),
-          ]),
-        ])),
-      ];
-    }
-
-    if (hunt.role === 'bystander') {
-      return [
-        h('div', { className: 'cachecache__waiting' }, [
-          h('div', { style: 'font-size:1.1rem;' }, `🔦 ${view.hunterName} recherche ${hunt.hiderName}…`),
-          this.renderLastClick(view),
-          this.renderLegend(view),
-        ]),
-      ];
-    }
-
-    if (hunt.role === 'hunter') {
-      this.resetCursorForStage(`hunt-${hunt.hiderId}`, { x: 0.5, y: 0.5 });
-      const stage = this.buildStage({
-        backgroundSrc: MAP_SRC(hunt.mapId),
-        disabled: false,
-        onPick: (x, y) => { this.cursor = { x, y }; this.act({ a: 'huntClick', x, y }); },
-        overlay: hunt.lastClick ? [h('div', {
-          className: 'ccclick',
-          style: `left:${hunt.lastClick.x * 100}%; top:${hunt.lastClick.y * 100}%; border-color:${hunt.lastClick.color};`,
-        })] : [],
-      });
-      return [
-        h('div', {}, `Cherchez ${hunt.hiderName} ! Cliquez, touchez, ou utilisez les flèches + Entrée sur la carte.`),
-        h('div', { className: 'ccstage-wrap' }, stage),
-        this.renderLastClick(view),
-        this.renderLegend(view),
-      ];
-    }
-
-    // role === 'owner' : le joueur regarde le Chasseur fouiller SA propre carte.
-    const stageOwner = h('div', {
-      className: 'ccstage ccstage--disabled',
-      style: `background-image:url('${MAP_SRC(hunt.mapId)}');`,
+  buildScoreTable(scores) {
+    return h('table', { className: 'cc__scoretable' }, h('tbody', {}, scores.map((s) => h('tr', {
+      className: s.id === this.ctx.me.id ? 'cc__scoretable-row--me' : '',
     }, [
-      h('div', {
-        className: 'ccshape',
-        style: `left:${hunt.x * 100}%; top:${hunt.y * 100}%; width:${18 * hunt.scale}%; transform: translate(-50%,-50%) rotate(${hunt.rotation}deg);`,
-      }, h('img', { src: SHAPE_SRC(hunt.shapeId), alt: '' })),
-      ...(hunt.lastClick ? [h('div', {
-        className: 'ccclick',
-        style: `left:${hunt.lastClick.x * 100}%; top:${hunt.lastClick.y * 100}%; border-color:${hunt.lastClick.color};`,
-      })] : []),
+      h('td', {}, s.pseudo === this.ctx.me.pseudo ? `${s.pseudo} (toi)` : s.pseudo),
+      h('td', { className: 'cc__scoretable-pts' }, String(s.score)),
+    ]))));
+  }
+
+  buildControls() {
+    if (!this.isHost) return h('div', { className: 'cc__controls' });
+    return h('div', { className: 'cc__controls' }, [
+      h('button', { className: 'btn btn--ghost btn--small', type: 'button', onClick: () => this.confirmEndNow() }, '🛑 Terminer la partie'),
     ]);
-    return [
-      h('div', {}, `👀 ${view.hunterName} fouille votre carte en ce moment même !`),
-      h('div', { className: 'ccstage-wrap' }, stageOwner),
-      this.renderLastClick(view),
-    ];
   }
 
-  /** Zone interactive (souris/tactile/clavier) commune au placement et à la chasse. */
-  buildStage({ backgroundSrc, onPick, overlay = [], disabled = false }) {
-    const stage = h('div', {
-      className: `ccstage${disabled ? ' ccstage--disabled' : ''}`,
-      style: `background-image:url('${backgroundSrc}');`,
-      tabindex: disabled ? undefined : '0',
-      role: 'application',
-      'aria-label': 'Zone de jeu interactive : cliquez, touchez ou utilisez les flèches puis Entrée',
-    }, overlay);
-
-    if (!disabled) {
-      const cursorEl = h('div', {
-        className: 'cccursor',
-        style: `left:${this.cursor.x * 100}%; top:${this.cursor.y * 100}%;`,
-      });
-      stage.append(cursorEl);
-
-      const pick = (x, y) => { onPick(clamp01(x), clamp01(y)); this.render(this.view); };
-
-      stage.addEventListener('click', (e) => {
-        const rect = stage.getBoundingClientRect();
-        pick((e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height);
-      });
-      stage.addEventListener('touchend', (e) => {
-        const t = e.changedTouches?.[0];
-        if (!t) return;
-        e.preventDefault();
-        const rect = stage.getBoundingClientRect();
-        pick((t.clientX - rect.left) / rect.width, (t.clientY - rect.top) / rect.height);
-      }, { passive: false });
-      stage.addEventListener('keydown', (e) => {
-        const step = e.shiftKey ? 0.08 : 0.03;
-        if (e.key === 'ArrowLeft') { this.cursor.x = clamp01(this.cursor.x - step); this.render(this.view); e.preventDefault(); }
-        else if (e.key === 'ArrowRight') { this.cursor.x = clamp01(this.cursor.x + step); this.render(this.view); e.preventDefault(); }
-        else if (e.key === 'ArrowUp') { this.cursor.y = clamp01(this.cursor.y - step); this.render(this.view); e.preventDefault(); }
-        else if (e.key === 'ArrowDown') { this.cursor.y = clamp01(this.cursor.y + step); this.render(this.view); e.preventDefault(); }
-        else if (e.key === 'Enter' || e.key === ' ') { pick(this.cursor.x, this.cursor.y); e.preventDefault(); }
-      });
-    }
-    return stage;
+  confirmEndNow() {
+    if (typeof confirm === 'function' && !confirm('Terminer la partie maintenant ?')) return;
+    this.act({ a: 'endGameNow' });
   }
 
-  /* -------- transitions & fin -------- */
-
-  renderRoundEnd(view) {
-    const r = view.roundRecap;
-    return [
-      h('div', { className: 'cachecache__waiting' }, [
-        h('strong', {}, `✅ Fin de la manche ${r?.roundNumber ?? ''}`),
-        h('div', {}, `${r?.hunterName ?? ''} a terminé sa chasse.`),
-        h('table', {}, [
-          h('tr', {}, [h('th', {}, 'Joueur'), h('th', {}, 'Score')]),
-          ...view.players.map((p) => h('tr', {}, [h('td', {}, p.pseudo), h('td', {}, String(p.score))])),
-        ]),
-        h('div', { style: 'color:var(--text-dim,#aab);font-size:0.85rem;' }, 'Prochaine manche dans un instant…'),
-      ]),
-    ];
+  updateCountdownUI() {
+    if (!this.timerEl) return;
+    if (!this.view?.phaseDeadline) { this.timerEl.textContent = ''; return; }
+    const remaining = this.view.phaseDeadline - Date.now();
+    this.timerEl.textContent = `⏱️ ${fmtCountdown(remaining)}`;
   }
 
-  renderFinPartie(view) {
-    const c = view.finPartie?.classement ?? [];
-    return [
-      h('strong', {}, '🏆 Classement final'),
-      h('table', {}, c.map((p, i) => h('tr', {}, [
-        h('td', {}, `${i + 1}.`), h('td', {}, p.pseudo), h('td', {}, `${p.score} pt${p.score > 1 ? 's' : ''}`),
-      ]))),
-      h('div', { style: 'color:var(--text-dim,#aab);' }, 'Retour au salon dans quelques secondes…'),
-    ];
-  }
+  /* ============================== PHASE CACHE — écran du Chasseur (attente) ============================== */
 
-  /* -------- chat -------- */
-
-  renderChatPanel() {
-    const list = h('div', { className: 'cachecache__chatlist' }, this.chatLog.map((m) => h('div', { className: 'cachecache__chatmsg' }, [
-      h('span', { className: 'cachecache__chatauthor' }, `${m.pseudo}: `),
-      h('span', {}, m.text),
+  renderHunterWaiting(view) {
+    const list = h('div', { className: 'cc__waiting-list' }, view.hidersStatus.map((p) => h('div', { className: 'cc__waiting-row' }, [
+      h('span', {}, p.pseudo),
+      h('span', { className: p.locked ? 'tag tag--ok' : 'tag' }, p.locked ? '🔒 prêt·e' : '✏️ se cache…'),
     ])));
-    const input = h('input', { type: 'text', placeholder: 'Écrire un message…', maxlength: '300', className: 'cachecache__chatinput' });
-    const sendBtn = h('button', { type: 'button', className: 'btn btn--primary btn--small' }, 'Envoyer');
-    const submit = () => {
-      if (!input.value.trim()) return;
-      this.sendChatMessage(input.value);
-      input.value = '';
-      input.focus();
-    };
-    sendBtn.addEventListener('click', submit);
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
-    requestAnimationFrame(() => { list.scrollTop = list.scrollHeight; });
-    return h('div', { className: 'cachecache__panel cachecache__chat' }, [
-      h('strong', {}, '💬 Chat'),
+    const main = h('div', { className: 'cc__blackout' }, h('div', { className: 'cc__blackout-inner' }, [
+      h('div', { className: 'cc__blackout-eye' }, '🙈'),
+      h('p', {}, 'Les autres joueurs se cachent…'),
+      h('p', { className: 'cc__hint' }, 'Tu ne verras ni la carte ni leur position avant le début de la chasse.'),
       list,
-      h('div', { className: 'cachecache__chatrow' }, [input, sendBtn]),
-    ]);
+    ]));
+    this.renderShell(main, { subtitle: 'Tu es le Chasseur — patiente 🙈' });
   }
 
-  unmount() {
-    this.unsubscribe?.();
-    this.clearTimers();
-    clearInterval(this.tickInterval);
-    clearTimeout(this.statusTimer);
-    this.styleEl?.remove();
-    this.root?.remove();
-    this.statusEl = null;
+  /* ============================== PHASE CACHE — écran des Cacheurs ============================== */
+
+  renderHideStage(view) {
+    const me = view.hiders.find((p) => p.id === this.ctx.me.id);
+    this.myLocked = me?.locked ?? false;
+    this.myColor = me?.color ?? DEFAULT_COLOR;
+    this.myPos = { x: me?.x ?? 0.5, y: me?.y ?? 0.5 };
+    this.otherHiders = new Map(view.hiders.filter((p) => p.id !== this.ctx.me.id).map((p) => [p.id, p]));
+
+    this.stageCanvas = h('canvas', { className: 'cc__stage', width: String(STAGE_SIZE), height: String(STAGE_SIZE) });
+    this.stageCtx = this.stageCanvas.getContext('2d');
+    this.stageCanvas.addEventListener('click', (e) => this.onHideStageClick(e));
+
+    const toolbar = h('div', { className: 'cc__toolbar' }, [
+      h('button', {
+        type: 'button', className: `cc__toolbtn cc__toolbtn--move${this.mode === 'deplacer' ? ' cc__toolbtn--active' : ''}`,
+        onClick: () => this.setToolMode('deplacer'),
+      }, '🚶 Déplacer'),
+      h('button', {
+        type: 'button', className: `cc__toolbtn cc__toolbtn--pipette${this.mode === 'pipette' ? ' cc__toolbtn--active' : ''}`,
+        onClick: () => this.setToolMode('pipette'),
+      }, '🎨 Pipette'),
+      h('span', { className: 'cc__colorswatch', style: `background:${this.myColor};`, title: 'Ta couleur actuelle' }),
+      h('button', {
+        type: 'button', className: `cc__toolbtn cc__toolbtn--lock${this.myLocked ? ' cc__toolbtn--active' : ''}`,
+        onClick: () => this.toggleLock(),
+      }, this.myLocked ? '🔒 Verrouillé·e' : '🔓 Verrouiller'),
+    ]);
+
+    const main = h('div', { className: 'cc__stagewrap' }, [toolbar, this.stageCanvas]);
+    this.renderShell(main, {
+      subtitle: this.myLocked ? 'Position verrouillée — tu peux quand même changer de couleur.' : 'Place-toi et peins-toi pour te fondre dans le décor.',
+    });
+    this.loadMapAndDraw(view.mapId, () => this.redrawHideStage());
+  }
+
+  /** Bascule locale (mode outil / verrou) : met à jour uniquement les boutons concernés et
+   * redessine le canevas, SANS reconstruire tout l'écran — sinon on re-dériverait l'état
+   * (verrouillé, couleur, position) depuis la dernière vue réseau reçue, qui peut être
+   * périmée d'un cran juste après une action optimiste locale, et l'écraserait aussitôt. */
+  setToolMode(mode) {
+    this.mode = mode;
+    this.root.querySelector('.cc__toolbtn--move')?.classList.toggle('cc__toolbtn--active', mode === 'deplacer');
+    this.root.querySelector('.cc__toolbtn--pipette')?.classList.toggle('cc__toolbtn--active', mode === 'pipette');
+  }
+
+  toggleLock() {
+    const next = !this.myLocked;
+    this.act({ a: 'updateHiderState', patch: { locked: next } });
+    this.myLocked = next;
+    const btn = this.root.querySelector('.cc__toolbtn--lock');
+    if (btn) { btn.textContent = next ? '🔒 Verrouillé·e' : '🔓 Verrouiller'; btn.classList.toggle('cc__toolbtn--active', next); }
+    this.setStatus(next ? 'Position verrouillée.' : 'Position déverrouillée.');
+  }
+
+  onHideStageClick(e) {
+    const { x, y } = this.pointerToNormalized(e, this.stageCanvas);
+    if (this.mode === 'pipette') {
+      const color = this.sampleColorAt(x, y);
+      if (color) {
+        this.myColor = color;
+        this.act({ a: 'updateHiderState', patch: { color } });
+        this.redrawHideStage();
+        const swatch = this.root.querySelector('.cc__colorswatch');
+        if (swatch) swatch.style.background = color;
+      }
+      return;
+    }
+    if (this.myLocked) { this.setStatus('Déverrouille pour te déplacer.'); return; }
+    this.myPos = { x, y };
+    this.throttledSendMove(x, y);
+    this.redrawHideStage();
+  }
+
+  throttledSendMove(x, y) {
+    const now = Date.now();
+    if (now - this._lastMoveSentAt < 120) {
+      clearTimeout(this._moveSendTimer);
+      this._moveSendTimer = setTimeout(() => this.throttledSendMove(this.myPos.x, this.myPos.y), 130);
+      return;
+    }
+    this._lastMoveSentAt = now;
+    this.act({ a: 'updateHiderState', patch: { x, y } });
+  }
+
+  /* ============================== PHASE CHASSE (Chasseur + spectateurs) ============================== */
+
+  renderHuntStage(view) {
+    this.stageCanvas = h('canvas', { className: 'cc__stage', width: String(STAGE_SIZE), height: String(STAGE_SIZE) });
+    this.stageCtx = this.stageCanvas.getContext('2d');
+    this.huntHiders = new Map(view.hiders.map((p) => [p.id, p]));
+    this.huntShots = [...view.shots];
+    if (view.isHunter) {
+      this.stageCanvas.addEventListener('click', (e) => this.onHuntStageClick(e));
+      this.stageCanvas.addEventListener('mousemove', (e) => this.onHuntStageMove(e));
+    }
+    const toolbar = h('div', { className: 'cc__toolbar' }, [
+      h('span', { className: 'cc__bullets' }, `🔫 ${view.bullets} munition${view.bullets > 1 ? 's' : ''}`),
+      h('span', { className: 'cc__hint' }, view.isHunter ? 'Clique sur le décor pour tirer.' : `👀 Tu regardes ${view.hunterPseudo} chercher…`),
+    ]);
+    const main = h('div', { className: 'cc__stagewrap' }, [toolbar, this.stageCanvas]);
+    this.renderShell(main, { subtitle: view.isHunter ? 'Repère les joueurs camouflés et tire !' : `${view.hunterPseudo} est en train de chercher.` });
+    this.loadMapAndDraw(view.mapId, () => this.redrawHuntStage());
+  }
+
+  onHuntStageClick(e) {
+    if (!this.view || (this.view.bullets ?? 0) <= 0) return;
+    const { x, y } = this.pointerToNormalized(e, this.stageCanvas);
+    this.act({ a: 'shoot', x, y });
+  }
+
+  onHuntStageMove(e) {
+    const { x, y } = this.pointerToNormalized(e, this.stageCanvas);
+    const now = Date.now();
+    if (now - this._lastCursorSentAt < 90) return;
+    this._lastCursorSentAt = now;
+    this.act({ a: 'cursor', x, y });
+  }
+
+  /* ============================== RÉSULTAT DE MANCHE / FINAL ============================== */
+
+  renderRoundResult(view) {
+    const rows = view.hiders.map((p) => h('div', { className: 'cc__result-row' }, [
+      h('span', {}, p.pseudo),
+      h('span', { className: p.found ? 'tag tag--bad' : 'tag tag--ok' }, p.found ? '🎯 trouvé·e' : '🙈 pas trouvé·e'),
+    ]));
+    const found = view.hiders.filter((p) => p.found).length;
+    const main = h('div', { className: 'cc__result' }, [
+      h('h3', {}, `🏁 Fin de la manche ${view.round}/${view.totalRounds}`),
+      h('p', {}, `${view.hunterPseudo} a trouvé ${found}/${view.hiders.length} joueur${view.hiders.length > 1 ? 's' : ''}.`),
+      ...rows,
+      h('p', { className: 'cc__hint' }, 'Manche suivante dans quelques secondes…'),
+    ]);
+    this.renderShell(main, { subtitle: 'Résultat de la manche' });
+  }
+
+  renderFinal(view) {
+    const podium = view.scores.map((s, i) => h('div', { className: 'cc__final-row' }, [
+      h('span', { className: 'cc__final-rank' }, i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`),
+      h('span', { className: 'cc__final-name' }, s.pseudo),
+      h('span', { className: 'cc__final-pts' }, `${s.score} pts`),
+    ]));
+    const main = h('div', { className: 'cc__result' }, [h('h3', {}, '🏆 Classement final'), ...podium]);
+    this.renderShell(main, { subtitle: 'Retour au salon dans quelques secondes…' });
+  }
+
+  /* ============================== CANEVAS : CHARGEMENT DE CARTE, DESSIN, ÉCHANTILLONNAGE ============================== */
+
+  loadMapAndDraw(mapId, cb) {
+    if (this.mapImageId === mapId && this.mapImage) { cb(); return; }
+    const img = new Image();
+    img.onload = () => {
+      this.mapImage = img; this.mapImageId = mapId;
+      this.baseCanvas = document.createElement('canvas');
+      this.baseCanvas.width = STAGE_SIZE; this.baseCanvas.height = STAGE_SIZE;
+      drawImageCover(this.baseCanvas.getContext('2d'), img, STAGE_SIZE);
+      cb();
+    };
+    img.onerror = () => this.setStatus('Impossible de charger la carte.');
+    img.src = mapUrl(mapId);
+  }
+
+  sampleColorAt(x, y) {
+    if (!this.baseCanvas) return null;
+    try {
+      const px = Math.min(STAGE_SIZE - 1, Math.max(0, Math.floor(x * STAGE_SIZE)));
+      const py = Math.min(STAGE_SIZE - 1, Math.max(0, Math.floor(y * STAGE_SIZE)));
+      const d = this.baseCanvas.getContext('2d').getImageData(px, py, 1, 1).data;
+      return `#${[d[0], d[1], d[2]].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+    } catch { return null; }
+  }
+
+  pointerToNormalized(e, canvas) {
+    const rect = canvas.getBoundingClientRect();
+    return { x: clamp01((e.clientX - rect.left) / rect.width), y: clamp01((e.clientY - rect.top) / rect.height) };
+  }
+
+  redrawHideStage() {
+    if (!this.stageCtx || !this.baseCanvas) return;
+    const ctx = this.stageCtx;
+    ctx.clearRect(0, 0, STAGE_SIZE, STAGE_SIZE);
+    ctx.drawImage(this.baseCanvas, 0, 0);
+    for (const p of this.otherHiders.values()) drawCharacter(ctx, STAGE_SIZE, p.x, p.y, p.color, { locked: p.locked, dim: true });
+    drawCharacter(ctx, STAGE_SIZE, this.myPos.x, this.myPos.y, this.myColor, { locked: this.myLocked });
+  }
+
+  redrawHuntStage() {
+    if (!this.stageCtx || !this.baseCanvas) return;
+    const ctx = this.stageCtx;
+    ctx.clearRect(0, 0, STAGE_SIZE, STAGE_SIZE);
+    ctx.drawImage(this.baseCanvas, 0, 0);
+    for (const p of this.huntHiders.values()) drawCharacter(ctx, STAGE_SIZE, p.x, p.y, p.color, { found: p.found });
+    for (const s of this.huntShots) drawSplat(ctx, STAGE_SIZE, s.x, s.y, s.hit);
+    if (this.hunterCursor && this.view && !this.view.isHunter) drawCrosshair(ctx, STAGE_SIZE, this.hunterCursor.x, this.hunterCursor.y);
   }
 }
 
-/* ====================================================================== */
-/* Contrat de module Arcade                                               */
-/* ====================================================================== */
+const CSS = `
+.cc { height:100%; display:flex; flex-direction:column; gap:12px; color:var(--text,#e8ecff); font-family:inherit; }
+.cc *{ box-sizing:border-box; }
+.cc button{ font-family:inherit; cursor:pointer; }
+.cc .btn{ padding:9px 14px; border-radius:var(--radius-m,12px); border:1px solid var(--glass-border,rgba(255,255,255,.14)); background:var(--glass,rgba(255,255,255,.06)); color:var(--text,#e8ecff); font-size:.86rem; font-weight:600; transition:transform .12s ease, background .12s ease; }
+.cc .btn:hover{ transform:translateY(-1px); background:rgba(255,255,255,.1); }
+.cc .btn--primary{ background:linear-gradient(135deg,var(--accent-2,#29d3c2),var(--accent,#7c5cff)); border-color:transparent; color:#0b0b12; }
+.cc .btn--ghost{ background:transparent; }
+.cc .btn--small{ padding:6px 10px; font-size:.78rem; }
+.cc .tag{ font-size:.72rem; padding:2px 8px; border-radius:999px; background:rgba(255,255,255,.08); color:var(--text-dim,#aab); }
+.cc .tag--ok{ background:rgba(41,211,194,.18); color:var(--accent-2,#29d3c2); }
+.cc .tag--bad{ background:rgba(255,61,90,.18); color:#ff5c7a; }
+
+.cc__header{ display:flex; align-items:center; justify-content:space-between; }
+.cc__title{ font-weight:700; display:flex; align-items:center; gap:10px; }
+.cc__subtitle{ font-weight:400; font-size:.8rem; color:var(--text-dim,#aab); }
+.cc__timer{ font-variant-numeric:tabular-nums; font-size:1.05rem; font-weight:800; padding:5px 12px; border-radius:var(--radius-s,10px); background:rgba(0,0,0,.35); border:1px solid var(--glass-border,rgba(255,255,255,.1)); }
+
+.cc__layout{ flex:1; min-height:0; display:grid; grid-template-columns:1fr 280px; gap:14px; }
+.cc__side{ display:flex; flex-direction:column; gap:12px; min-height:0; overflow:auto; }
+.cc__panel{ background:var(--glass,rgba(255,255,255,.05)); border:1px solid var(--glass-border,rgba(255,255,255,.09)); border-radius:var(--radius-m,14px); padding:12px; display:flex; flex-direction:column; gap:8px; }
+.cc__panel strong{ font-size:.85rem; }
+.cc__status{ min-height:1.3em; text-align:center; font-size:.86rem; font-weight:600; color:var(--accent-2,#29d3c2); }
+.cc__controls{ display:flex; justify-content:center; }
+
+.cc__stagewrap{ display:flex; flex-direction:column; gap:10px; align-items:center; min-height:0; }
+.cc__toolbar{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:center; }
+.cc__toolbtn{ padding:7px 12px; border-radius:999px; border:1px solid var(--glass-border,rgba(255,255,255,.14)); background:rgba(255,255,255,.04); color:var(--text,#e8ecff); font-size:.8rem; font-weight:600; }
+.cc__toolbtn--active{ background:linear-gradient(135deg,var(--accent-2,#29d3c2),var(--accent,#7c5cff)); color:#0b0b12; border-color:transparent; }
+.cc__colorswatch{ width:26px; height:26px; border-radius:50%; border:2px solid rgba(255,255,255,.5); box-shadow:0 0 0 1px rgba(0,0,0,.4); }
+.cc__bullets{ font-weight:700; font-size:.85rem; }
+.cc__hint{ font-size:.78rem; color:var(--text-dim,#aab); text-align:center; }
+.cc__stage{ width:min(640px,100%); aspect-ratio:1/1; max-height:64vh; border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,.4); cursor:crosshair; background:#111; }
+
+.cc__blackout{ flex:1; display:flex; align-items:center; justify-content:center; width:100%; min-height:280px; background:#05050a; border-radius:14px; }
+.cc__blackout-inner{ text-align:center; display:flex; flex-direction:column; align-items:center; gap:6px; padding:24px; }
+.cc__blackout-eye{ font-size:2.4rem; margin-bottom:6px; }
+.cc__waiting-list{ margin-top:10px; display:flex; flex-direction:column; gap:6px; min-width:220px; }
+.cc__waiting-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:.85rem; background:rgba(255,255,255,.05); padding:6px 10px; border-radius:8px; }
+
+.cc__result, .cc__final-row + .cc__final-row{ }
+.cc__result{ background:var(--glass,rgba(255,255,255,.05)); border:1px solid var(--glass-border,rgba(255,255,255,.09)); border-radius:var(--radius-m,14px); padding:20px; width:min(480px,100%); margin:auto; text-align:center; }
+.cc__result h3{ margin:0 0 8px; }
+.cc__result-row{ display:flex; align-items:center; justify-content:space-between; padding:6px 4px; border-bottom:1px solid rgba(255,255,255,.06); font-size:.86rem; }
+.cc__final-row{ display:grid; grid-template-columns:34px 1fr auto; align-items:center; gap:8px; padding:7px 4px; font-size:.9rem; border-bottom:1px solid rgba(255,255,255,.06); text-align:left; }
+.cc__final-pts{ font-weight:700; color:var(--accent-2,#29d3c2); }
+
+.cc__scoretable{ width:100%; border-collapse:collapse; font-size:.82rem; }
+.cc__scoretable td{ padding:4px 2px; }
+.cc__scoretable-pts{ text-align:right; font-weight:700; color:var(--accent-2,#29d3c2); }
+.cc__scoretable-row--me td{ color:var(--text,#e8ecff); font-weight:700; }
+
+.cc__chat{ display:flex; flex-direction:column; gap:8px; }
+.cc__chat-messages{ display:flex; flex-direction:column; gap:8px; max-height:170px; overflow-y:auto; padding-right:2px; }
+.cc__chat-empty{ color:var(--text-faint,#616880); font-size:.78rem; font-style:italic; text-align:center; padding:6px 0; }
+.cc__chat-msg{ display:flex; gap:8px; }
+.cc__chat-msg__avatar{ font-size:1.1rem; line-height:1.5; }
+.cc__chat-msg__head{ display:flex; align-items:baseline; gap:6px; flex-wrap:wrap; }
+.cc__chat-msg__pseudo{ font-weight:600; font-size:.82rem; }
+.cc__chat-msg__time{ font-size:.68rem; color:var(--text-faint,#616880); }
+.cc__chat-msg__text{ margin:1px 0 0; font-size:.85rem; color:var(--text-dim,#aab); overflow-wrap:anywhere; }
+.cc__chat-form{ display:flex; gap:8px; }
+.cc__chat-form input{ flex:1; min-width:0; padding:8px 10px; font:inherit; font-size:.85rem; color:var(--text,#e8ecff); background:rgba(0,0,0,.35); border:1px solid var(--glass-border,rgba(255,255,255,.12)); border-radius:var(--radius-s,10px); }
+
+@media (max-width:1000px){
+  .cc__layout{ grid-template-columns:1fr; }
+}
+`;
 
 let instance = null;
-
 export default {
   async mount(container, context) {
     instance = new CacheCacheUI(container, context);

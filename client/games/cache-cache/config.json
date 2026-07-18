@@ -1,20 +1,19 @@
 {
   "id": "cache-cache",
   "nom": "Cache-Cache",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "joueurs": { "min": 2, "max": 8 },
   "architecture": "host-autoritaire",
-  "communication": "game:message (relais générique du moteur : vues ciblées par joueur + diffusion pour le chat)",
+  "communication": "game:message (relais générique du moteur : vues ciblées par joueur, correctifs légers de position/curseur/tir, diffusion pour le chat)",
   "regles": {
-    "principe": "chaque joueur est Chasseur exactement une fois ; une manche = un Chasseur qui recherche tous les autres joueurs",
+    "principe": "chaque joueur est Chasseur exactement une fois ; une manche = un Chasseur + (n-1) Cacheurs sur UNE carte partagée tirée au sort",
     "phases": {
-      "choixCarte": "30s, cacheurs uniquement, sélection privée",
-      "cache": "30s, cacheurs uniquement, choix/personnalisation d'une forme + position, verrouillage privé",
-      "chasse": "30s par carte, ordre aléatoire, -3s par clic, indice de proximité en cas d'échec"
+      "cache": "2 min, Cacheurs uniquement : déplacement + pipette/peinture pour se camoufler dans le décor, verrouillage de position. Le Chasseur est sur écran noir (aucune carte ni position transmise avant la fin de cette phase).",
+      "chasse": "le Chasseur reçoit la scène complète et dispose de 2×(n-1) tirs pour repérer les Cacheurs à l'œil ; fin anticipée si munitions épuisées ou tout le monde trouvé (filet de sécurité : 2 min max)"
     },
     "cartes": 10,
-    "formes": 10,
-    "penaliteClicMs": 3000,
-    "degradeProximite": ["bleu clair", "bleu", "cyan", "vert", "jaune", "orange", "rouge"]
-  }
+    "rayonDetection": 0.045,
+    "points": { "cacheurSurvit": 2, "chasseurParTrouvaille": 1 }
+  },
+  "notes": "Version 2.0.0 : remplace le mécanisme de recherche à l'aveugle (clic + indice de proximité, formes 1-10) par une chasse visuelle de camouflage sur une carte partagée. Les 10 cartes existantes sont réutilisées ; les 10 formes ne le sont plus (un seul personnage, personnalisable par la couleur uniquement)."
 }
