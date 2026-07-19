@@ -137,18 +137,18 @@
       "visible": true
     },
     {
-      "id": "morpion",
-      "nom": "Morpion",
-      "description": "Trois symboles alignés pour gagner : simple, rapide, redoutable.",
-      "icone": "❌",
-      "image": "/games/morpion/assets/cover.png",
+      "id": "last-shot",
+      "nom": "Last Shot",
+      "description": "10 secondes pour se positionner et viser, puis tout le monde tire : la plateforme rétrécit à chaque manche jusqu'au dernier survivant.",
+      "icone": "🎯",
+      "image": "/games/last-shot/assets/cover.png",
       "joueursMin": 2,
-      "joueursMax": 2,
-      "etat": "en-developpement",
-      "version": "0.0.0",
+      "joueursMax": 12,
+      "etat": "disponible",
+      "version": "1.0.0",
       "auteur": "Manu",
       "module": "index.js",
-      "chemin": "/games/morpion/",
+      "chemin": "/games/last-shot/",
       "visible": true
     },
     {
