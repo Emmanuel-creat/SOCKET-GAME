@@ -1,0 +1,19 @@
+{
+  "id": "bataille-navale",
+  "nom": "Bataille Navale",
+  "version": "1.0.0",
+  "joueurs": { "min": 2, "max": 6 },
+  "architecture": "host-autoritaire",
+  "communication": "game:message (sendMessage(data, to=null) = diffusion salon)",
+  "regles": {
+    "grille": "8 x 8, par joueur",
+    "flotte": "5 navires : longueurs 4, 3, 2, 2, 1",
+    "phases": "placement (libre, chaque joueur sur sa propre grille) puis bataille (manches simultanees)",
+    "manche": "chaque joueur soumet une action (tir ou bonus) ; resolution commune des que tout le monde a joue ou au bout de 22 s (tir automatique pour les absents)",
+    "bonus": "Double Tir, Radar, Missile de Croisiere, Frappe en Croix, Torpille, Bouclier, Scanner, Canon Chanceux -- obtenus en coulant un navire, en trouvant une epave cachee, ou en enchainant 2 tirs reussis",
+    "evenements": "toutes les 4 manches : Tempete (derive des flottes intactes), Brouillard (bloque Radar/Scanner 2 manches), Caisse de ravitaillement (bonus gratuit au plus endommage)",
+    "victoire": "dernier capitaine avec au moins un navire encore a flot",
+    "deconnexion": "victoire par forfait apres 30 s de silence ; reprise d'arbitrage possible si l'Host deconnecte (les grilles secretes sont redemandees aux survivants)"
+  },
+  "chat": "non inclus dans cette version (log de bataille uniquement)"
+}
