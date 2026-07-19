@@ -1,0 +1,15 @@
+{
+  "id": "last-shot",
+  "nom": "Last Shot",
+  "description": "10 secondes pour se positionner et viser, puis tout le monde tire : la plateforme rétrécit à chaque manche jusqu'au dernier survivant.",
+  "icone": "🎯",
+  "image": "/games/last-shot/assets/cover.png",
+  "joueursMin": 2,
+  "joueursMax": 12,
+  "etat": "disponible",
+  "version": "1.0.0",
+  "auteur": "Manu",
+  "module": "index.js",
+  "chemin": "/games/last-shot/",
+  "visible": true
+}

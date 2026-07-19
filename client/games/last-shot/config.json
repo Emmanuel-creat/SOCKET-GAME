@@ -1,0 +1,16 @@
+{
+  "id": "last-shot",
+  "nom": "Last Shot",
+  "version": "1.0.0",
+  "joueurs": { "min": 2, "max": 12 },
+  "architecture": "host-autoritaire par manche (boucle 70 ms chez le Host pendant la préparation) ; la résolution des tirs est calculée UNE SEULE FOIS par manche (aucune boucle temps réel côté tir), puis rejouée à l'identique par tous les clients à partir du shotLog diffusé",
+  "communication": "game:message — actions ciblées vers le Host ({t:'action', action}), état complet diffusé à tous ({t:'state', state}) ; aucune information privée (positions et visées sont visibles de tous, comme sur la plateforme réelle)",
+  "regles": {
+    "arene": "plateforme circulaire flottante ; rayon initial 440, rétrécit d'environ 22% après chaque manche (minimum 90), joueurs trop excentrés repoussés vers l'intérieur",
+    "preparation": "10 secondes : déplacement libre (vitesse 230u/s), saut (visuel), orientation de l'arme (pointeur/glissé), ramassage de bonus au sol, verrouillage de la position (ou verrouillage forcé à la fin du chrono)",
+    "resolution": "tirs un par un dans un ordre aléatoire (mode Séquentiel) ou tous en même temps sur la base des positions figées en début de manche (mode Tir simultané, éliminations croisées possibles, parfois aucun survivant) ; balle = marche pas à pas, arrêt au premier joueur touché sauf bonus perforant/laser",
+    "bonus": "ramassables au sol, un seul actif à la fois, consommé au moment du tir : Double tir (2 balles), Laser (traverse tout le monde, ignore les boucliers), Ricochet (rebond sur le bord), Bouclier (bloque le prochain tir reçu), Téléporteur (échange de position juste avant de tirer), Gel (le joueur bloqué par un bouclier alors qu'il était visé par un tir Gel rate son prochain tour), Explosion (élimine aussi les joueurs proches du point d'impact), Perforant (traverse jusqu'à 3 joueurs supplémentaires)",
+    "victoire": "dernier joueur en vie (ou égalité totale sans survivant en mode Tir simultané)"
+  },
+  "controles": "flèches / ZQSD / WASD pour se déplacer, pointeur (souris ou glissé tactile) sur l'arène pour viser, Espace pour sauter, Entrée ou bouton 🔒 pour verrouiller ; pavé tactile dédié sur mobile"
+}
