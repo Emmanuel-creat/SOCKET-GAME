@@ -4,6 +4,7 @@
  * Aucune règle métier ici : uniquement de l'orchestration.
  */
 import { EVENTS } from '../../shared/events.js';
+import { pseudoReserve } from '../users/pseudosReserves.js';
 import { GAME_STATE, LIMITS, ROOM_STATUS } from '../../shared/constants.js';
 import { sanitizeText, isValidChatMessage } from '../../shared/validation.js';
 
@@ -95,6 +96,9 @@ export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRe
       return;
     }
 
+    if (pseudoReserve(payload.pseudo)) {
+      return fail('PSEUDO_RESERVE', 'Ce pseudo n\'est pas disponible. Choisissez-en un autre.');
+    }
     const user = users.register(socket.id, payload);
     if (!user) return fail('INVALID_PROFILE', `Pseudo invalide (${LIMITS.PSEUDO_MIN} à ${LIMITS.PSEUDO_MAX} caractères).`);
     socket.emit(EVENTS.USER_REGISTERED, { user: users.toPublic(user) });
@@ -104,6 +108,9 @@ export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRe
   });
 
   socket.on(EVENTS.USER_UPDATE_PROFILE, (payload = {}) => {
+    if (payload.pseudo !== undefined && pseudoReserve(payload.pseudo)) {
+      return fail('PSEUDO_RESERVE', 'Désolé, vous êtes trop raciste et aigri pour ce site. Nous vous conseillons d\'aller faire un don pour racheter votre âme.');
+    }
     const user = users.updateProfile(socket.id, payload);
     if (!user) return;
     socket.emit(EVENTS.USER_REGISTERED, { user: users.toPublic(user) });
