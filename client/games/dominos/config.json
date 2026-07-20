@@ -1,0 +1,29 @@
+{
+  "id": "dominos",
+  "nom": "Dominos",
+  "version": "1.0.0",
+  "joueurs": { "min": 2, "max": 4 },
+  "architecture": "host-autoritaire",
+  "communication": "game:message — 'view' est envoyée à CHAQUE joueur individuellement (jamais diffusée : contient sa main privée)",
+  "regles": {
+    "jeu": "Double-six par défaut (28 pièces) ; variantes double-neuf (55) et double-douze (91) disponibles au lobby",
+    "distribution": "7 dominos par joueur, le reste en pioche (0 restant à 4 joueurs pile)",
+    "premierJoueur": "Le joueur détenant le plus haut double commence la première manche ; ensuite, le gagnant de la manche précédente commence",
+    "pose": "Un domino doit correspondre à l'une des deux extrémités de la chaîne ; le premier domino de la manche se pose librement",
+    "doubles": "Affichés perpendiculairement à la chaîne, comme au jeu physique ; se posent normalement (pas de règle du 'spinner' à 4 branches)",
+    "pioche": "Piocher est obligatoire si aucun coup n'est jouable ; on pioche jusqu'à obtenir un domino jouable ou que la pioche soit vide",
+    "passe": "Autorisée uniquement quand la pioche est vide et qu'aucun coup n'est jouable",
+    "finDeManche": "Un joueur vide sa main (« domino ! ») OU tous les joueurs actifs passent d'affilée (partie bloquée)",
+    "scoreDomino": "Le gagnant marque la somme des points restant dans TOUTES les mains adverses",
+    "scoreBlocage": "Le joueur ayant le plus petit total en main gagne la manche et marque la somme des mains adverses ; égalité = personne ne marque",
+    "modes": {
+      "classique": "Cumul des scores, objectif par défaut 100 points",
+      "cible": "Cumul des scores jusqu'à un objectif personnalisé",
+      "rapide": "Une seule manche, décisive"
+    },
+    "ia": "3 niveaux (facile/moyen/difficile) pour compléter une table en solo — l'IA facile joue au hasard parmi les coups légaux, moyenne priorise se délester des grosses valeurs et des doubles, difficile évite en plus de laisser une extrémité facile aux adversaires",
+    "deconnexion": "Comme les autres jeux de la plateforme : indicateur d'absence après 6 s de silence, forfait automatique après 30 s (le joueur forfait est retiré de la rotation, la partie continue avec les joueurs restants)",
+    "sauvegarde": "Le Host sauvegarde automatiquement l'état complet (mains incluses) dans le stockage local de son navigateur à chaque coup ; si son onglet se recharge dans les 6h, la partie reprend exactement où elle en était. Limite assumée : ce filet de sécurité vit uniquement dans le navigateur du Host (comme tout l'état de jeu sur cette plateforme) — il ne survit ni à un changement d'appareil du Host, ni à un redémarrage du serveur."
+  },
+  "chat": "canal indépendant, historique persistant entre les manches"
+}
