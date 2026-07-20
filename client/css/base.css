@@ -8,6 +8,13 @@ html, body {
   height: 100%;
 }
 
+/* Hauteur RÉELLE de l'écran sur mobile : 100dvh suit la barre d'adresse qui se
+   rétracte, là où 100vh laisse un bandeau coupé en bas. Fallback : le height:100%
+   ci-dessus reste en place pour les navigateurs qui ne connaissent pas dvh. */
+@supports (height: 100dvh) {
+  html, body { height: 100dvh; }
+}
+
 body {
   font-family: var(--font-body);
   color: var(--text);
@@ -87,9 +94,64 @@ h1, h2, h3 {
   }
 }
 
-/* Responsive : sidebar horizontale sur petits écrans */
+/* ==========================================================================
+   Responsive mobile : la sidebar devient un panneau coulissant escamotable.
+   Avant, elle passait en bandeau au-dessus du contenu (grid-template-rows) et
+   mangeait de la hauteur en permanence — injouable en partie sur téléphone.
+   Désormais : une seule colonne, la sidebar sort du flux (position fixe hors
+   écran), un bouton ☰ l'ouvre, un voile la referme. Le jeu occupe 100 % de
+   l'écran. Sur grand écran : rien ne change.
+   ========================================================================== */
 @media (max-width: 820px) {
-  .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
-  body { overflow: auto; }
+  .app { grid-template-columns: 1fr; }
   .views { padding: var(--gap-m); }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(78vw, 300px);
+    z-index: 60;
+    transform: translateX(-105%);
+    transition: transform var(--t-med) var(--ease);
+    border-right: 1px solid var(--glass-border);
+    box-shadow: 8px 0 32px rgba(0, 0, 0, 0.45);
+    padding-left: calc(var(--gap-m) + env(safe-area-inset-left, 0px));
+    overflow-y: auto;
+  }
+  .app--menu-ouvert .sidebar { transform: none; }
+
+  .sidebar-toggle { display: grid; }
+  .app--menu-ouvert .sidebar-toggle { opacity: 0; pointer-events: none; }
+
+  .sidebar-voile {
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: rgba(4, 4, 12, 0.55);
+    backdrop-filter: blur(2px);
+    animation: voile-in var(--t-med) var(--ease);
+  }
+  @keyframes voile-in { from { opacity: 0; } to { opacity: 1; } }
+}
+
+/* Le bouton ☰ n'existe visuellement QUE sur mobile. */
+.sidebar-toggle {
+  display: none;
+  place-items: center;
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  left: calc(10px + env(safe-area-inset-left, 0px));
+  z-index: 65;
+  width: 42px;
+  height: 42px;
+  font-size: 1.25rem;
+  color: var(--text);
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-m);
+  backdrop-filter: blur(14px);
+  cursor: pointer;
+  transition: opacity var(--t-fast) var(--ease);
 }

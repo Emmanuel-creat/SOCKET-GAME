@@ -8,12 +8,16 @@ import { Router } from './core/Router.js';
 import { store } from './core/Store.js';
 import { Notifications } from './ui/Notifications.js';
 import { openProfileModal, openSettingsModal, openQuitModal } from './ui/modals.js';
+import { initSidebarMobile } from './ui/sidebarMobile.js';
 import { PlayView } from './views/PlayView.js';
 import { RoomsView } from './views/RoomsView.js';
 import { PlayersView } from './views/PlayersView.js';
 import { RoomView } from './views/RoomView.js';
 import { GameView } from './views/GameView.js';
 import { LABELS } from '/shared/constants.js';
+
+// --- Menu mobile (escamotable ≤ 820 px ; sans effet sur grand écran) ---
+initSidebarMobile();
 
 // --- Services ---
 const socket = new SocketClient();
