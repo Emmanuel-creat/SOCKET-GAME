@@ -565,13 +565,14 @@ display:flex;gap:12px;align-items:stretch;font-family:inherit;color:var(--dmn-in
 .dmn-banner p{margin:0;font-size:13px;opacity:.75;max-width:360px}
 .dmn-banner__scores{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:6px}
 
-.dmn-lobby{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:var(--dmn-deep);z-index:6;padding:20px;overflow:auto}
-.dmn-lobby__card{background:var(--dmn-surface);border:1px solid var(--dmn-border);border-radius:14px;padding:22px;width:100%;max-width:420px;display:grid;gap:14px}
+.dmn-lobby{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:var(--dmn-deep);z-index:6;padding:clamp(10px,3vw,28px);overflow:auto}
+.dmn-lobby__card{background:var(--dmn-surface);border:1px solid var(--dmn-border);border-radius:14px;padding:clamp(16px,3vw,28px);width:100%;max-width:960px;display:grid;gap:14px 20px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));align-content:start}
+.dmn-lobby__card h2,.dmn-lobby__full{grid-column:1/-1}
 .dmn-lobby__card h2{margin:0;font-size:19px}
 .dmn-field{display:grid;gap:6px;font-size:13px}
 .dmn-field label{font-weight:700;opacity:.85}
-.dmn-field select,.dmn-field input{background:var(--dmn-deep);border:1px solid var(--dmn-border);color:inherit;border-radius:8px;padding:8px 10px;font-size:13px}
-.dmn-seats{display:flex;flex-direction:column;gap:6px}
+.dmn-field select,.dmn-field input{width:100%;background:var(--dmn-deep);border:1px solid var(--dmn-border);color:inherit;border-radius:8px;padding:8px 10px;font-size:13px}
+.dmn-seats{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px}
 .dmn-seat{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;background:var(--dmn-deep);border:1px solid var(--dmn-border);font-size:13px}
 .dmn-seat__rm{margin-left:auto;background:transparent;border:none;color:#ff6b6b;cursor:pointer;font-size:14px}
 
@@ -1062,7 +1063,7 @@ export class DominoUI {
         h('div', { className: 'dmn-field' }, [h('label', {}, 'Mode'), modeSelect]),
         lb.mode === 'cible' ? h('div', { className: 'dmn-field' }, [h('label', {}, 'Score cible'), targetInput]) : null,
         h('div', { className: 'dmn-field' }, [h('label', {}, 'Variante'), variantSelect]),
-        h('div', { className: 'dmn-field' }, [
+        h('div', { className: 'dmn-field dmn-lobby__full' }, [
           h('label', {}, `Joueurs (${total}/4)`),
           h('div', { className: 'dmn-seats' }, seatRows),
           total < 4 ? h('div', { className: 'dmn__actions' }, [
@@ -1071,7 +1072,7 @@ export class DominoUI {
             h('button', { className: 'dmn-btn dmn-btn--ghost', onClick: () => this.addAI('difficile') }, '+ IA difficile'),
           ]) : null,
         ]),
-        h('button', { className: 'dmn-btn', disabled: total < 2, onClick: () => this.startMatch() }, '▶️ Démarrer la partie'),
+        h('button', { className: 'dmn-btn dmn-lobby__full', disabled: total < 2, onClick: () => this.startMatch() }, '▶️ Démarrer la partie'),
       ]),
     ]));
   }
