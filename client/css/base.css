@@ -95,16 +95,30 @@ h1, h2, h3 {
 }
 
 /* ==========================================================================
-   Responsive mobile : la sidebar devient un panneau coulissant escamotable.
-   Avant, elle passait en bandeau au-dessus du contenu (grid-template-rows) et
-   mangeait de la hauteur en permanence — injouable en partie sur téléphone.
-   Désormais : une seule colonne, la sidebar sort du flux (position fixe hors
-   écran), un bouton ☰ l'ouvre, un voile la referme. Le jeu occupe 100 % de
-   l'écran. Sur grand écran : rien ne change.
+   Responsive.
+   Deux régimes distincts selon l'APPAREIL, pas seulement la largeur :
+
+   1. Fenêtre étroite sur ORDINATEUR (souris présente : hover) — comportement
+      historique : la sidebar passe en bandeau au-dessus du contenu.
+   2. TÉLÉPHONE / TABLETTE (tactile : hover:none + pointer:coarse) — la sidebar
+      devient un panneau coulissant escamotable ouvert par un bouton ☰, et le
+      jeu occupe 100 % de l'écran.
+
+   Un desktop redimensionné garde donc son comportement d'avant ; seul un vrai
+   appareil tactile voit le menu escamotable.
    ========================================================================== */
+
+/* --- 1. Fenêtre étroite, ordinateur : bandeau historique --- */
 @media (max-width: 820px) {
-  .app { grid-template-columns: 1fr; }
+  .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  body { overflow: auto; }
   .views { padding: var(--gap-m); }
+}
+
+/* --- 2. Appareil tactile : menu escamotable --- */
+@media (max-width: 820px) and (hover: none) and (pointer: coarse) {
+  .app { grid-template-rows: 1fr; }
+  body { overflow: hidden; }
 
   .sidebar {
     position: fixed;
