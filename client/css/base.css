@@ -151,6 +151,10 @@ h1, h2, h3 {
 }
 
 /* Le bouton ☰ n'existe visuellement QUE sur mobile. */
+/* L'attribut hidden (posé dans le HTML, retiré par le JS sur tactile) doit
+   TOUJOURS l'emporter, y compris sur le display:grid du bloc tactile. */
+.sidebar-toggle[hidden] { display: none !important; }
+.sidebar-voile[hidden] { display: none !important; }
 .sidebar-toggle {
   display: none;
   place-items: center;

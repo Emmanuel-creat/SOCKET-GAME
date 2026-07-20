@@ -19,6 +19,16 @@ export function initSidebarMobile() {
   const sidebar = document.getElementById('sidebar');
   if (!app || !bouton || !voile || !sidebar) return;
 
+  // Le bouton ☰ n'existe que sur un vrai appareil tactile en écran étroit.
+  // On le révèle depuis le JS (il est `hidden` dans le HTML) : ainsi, même si
+  // le CSS n'est pas encore chargé ou est resté en cache, rien n'apparaît et
+  // rien ne casse la grille sur ordinateur.
+  const modeTactile = window.matchMedia('(max-width: 820px) and (hover: none) and (pointer: coarse)');
+  const appliquerMode = () => {
+    bouton.hidden = !modeTactile.matches;
+    if (!modeTactile.matches) fermer();
+  };
+
   const ouvrir = () => {
     app.classList.add('app--menu-ouvert');
     voile.hidden = false;
@@ -30,6 +40,9 @@ export function initSidebarMobile() {
     voile.hidden = true;
     bouton.setAttribute('aria-expanded', 'false');
   };
+
+  appliquerMode();
+  modeTactile.addEventListener?.('change', appliquerMode);
 
   bouton.addEventListener('click', ouvrir);
   voile.addEventListener('click', fermer);

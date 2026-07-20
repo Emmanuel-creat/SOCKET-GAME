@@ -19,12 +19,15 @@
   <!-- Fond animé (décoratif, non bloquant) -->
   <div class="bg-glow" aria-hidden="true"></div>
 
-  <div id="app" class="app">
-    <!-- Menu mobile : bouton d'ouverture + voile (invisibles sur grand écran) -->
-    <button id="sidebar-toggle" class="sidebar-toggle" aria-label="Ouvrir le menu"
-            aria-expanded="false" aria-controls="sidebar">☰</button>
-    <div id="sidebar-voile" class="sidebar-voile" hidden></div>
+  <!-- Menu mobile : bouton + voile VOLONTAIREMENT HORS de la grille .app
+       (un enfant inattendu de la grille en deviendrait une cellule et casserait
+       toute la mise en page si le CSS n'était pas encore chargé). `hidden` par
+       défaut : c'est le JS qui les révèle, uniquement sur appareil tactile. -->
+  <button id="sidebar-toggle" class="sidebar-toggle" aria-label="Ouvrir le menu"
+          aria-expanded="false" aria-controls="sidebar" hidden>☰</button>
+  <div id="sidebar-voile" class="sidebar-voile" hidden></div>
 
+  <div id="app" class="app">
     <!-- Barre latérale de navigation -->
     <nav id="sidebar" class="sidebar" aria-label="Navigation principale">
       <div class="sidebar__logo">
