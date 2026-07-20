@@ -277,7 +277,7 @@
       "description": "Posez vos dominos bout à bout, videz votre main en premier.",
       "icone": "🀄",
       "image": "/games/dominos/assets/cover.png",
-      "joueursMin": 2,
+      "joueursMin": 1,
       "joueursMax": 4,
       "etat": "disponible",
       "version": "1.0.0",
