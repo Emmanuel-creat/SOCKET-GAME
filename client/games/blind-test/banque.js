@@ -23,6 +23,10 @@ import { BANQUE_SERIES } from './banque-series.js';
 import { BANQUE_JEUXVIDEO } from './banque-jeuxvideo.js';
 import { BANQUE_HISTOIRE } from './banque-histoire.js';
 import { BANQUE_SCIENCE } from './banque-science.js';
+import { BANQUE_SPORT } from './banque-sport.js';
+import { BANQUE_GEO } from './banque-geo.js';
+import { BANQUE_LITTERATURE } from './banque-litterature.js';
+import { BANQUE_MYTHOLOGIE } from './banque-mythologie.js';
 
 export const CATEGORIES = {
   chanson: { label: '🎵 Chansons', consigne: 'Trouvez le titre OU l\'artiste' },
@@ -32,6 +36,10 @@ export const CATEGORIES = {
   jeuxvideo: { label: '🎮 Jeux vidéo', consigne: 'Trouvez le jeu' },
   histoire: { label: '📜 Histoire', consigne: 'Trouvez l\'événement ou le personnage' },
   science: { label: '🔬 Science', consigne: 'Trouvez la découverte ou le savant' },
+  sport: { label: '🏅 Sport', consigne: 'Trouvez l\'exploit, l\'athlète ou la compétition' },
+  geo: { label: '🌍 Géographie', consigne: 'Trouvez le lieu, le pays ou le monument' },
+  litterature: { label: '📖 Littérature', consigne: 'Trouvez l\'œuvre ou l\'auteur' },
+  mythologie: { label: '⚡ Mythologie', consigne: 'Trouvez la divinité, le héros ou le mythe' },
 };
 
 /**
@@ -72,6 +80,10 @@ export function manchesDeLaBanque(categoriesActives) {
     ...convertir(BANQUE_JEUXVIDEO, 'jeuxvideo', 'jeu'),
     ...convertir(BANQUE_HISTOIRE, 'histoire', 'reponse'),
     ...convertir(BANQUE_SCIENCE, 'science', 'reponse'),
+    ...convertir(BANQUE_SPORT, 'sport', 'reponse'),
+    ...convertir(BANQUE_GEO, 'geo', 'reponse'),
+    ...convertir(BANQUE_LITTERATURE, 'litterature', 'reponse'),
+    ...convertir(BANQUE_MYTHOLOGIE, 'mythologie', 'reponse'),
   ];
   if (!categoriesActives || !categoriesActives.size) return tout;
   return tout.filter((m) => categoriesActives.has(m.categorie));
