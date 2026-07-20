@@ -19,12 +19,33 @@
 import { BANQUE_CHANSONS } from './banque-chansons.js';
 import { BANQUE_PHILO } from './banque-philo.js';
 import { BANQUE_CINEMA } from './banque-cinema.js';
+import { BANQUE_SERIES } from './banque-series.js';
+import { BANQUE_JEUXVIDEO } from './banque-jeuxvideo.js';
+import { BANQUE_HISTOIRE } from './banque-histoire.js';
+import { BANQUE_SCIENCE } from './banque-science.js';
 
 export const CATEGORIES = {
   chanson: { label: '🎵 Chansons', consigne: 'Trouvez le titre OU l\'artiste' },
   philo: { label: '🧠 Philosophie', consigne: 'Trouvez le penseur' },
   cinema: { label: '🎬 Cinéma', consigne: 'Trouvez le film' },
+  series: { label: '📺 Séries', consigne: 'Trouvez la série' },
+  jeuxvideo: { label: '🎮 Jeux vidéo', consigne: 'Trouvez le jeu' },
+  histoire: { label: '📜 Histoire', consigne: 'Trouvez l\'événement ou le personnage' },
+  science: { label: '🔬 Science', consigne: 'Trouvez la découverte ou le savant' },
 };
+
+/**
+ * Fabrique générique : toutes les banques suivent la même forme
+ * { <champ réponse>, alias[], info, textes[] } — une seule fonction suffit.
+ */
+function convertir(banque, categorie, champ) {
+  return banque.map((e) => ({
+    categorie,
+    textes: e.textes,
+    solutions: [{ label: e[champ], alias: e.alias ?? [] }],
+    info: e.info ?? '',
+  }));
+}
 
 function chansons() {
   return BANQUE_CHANSONS.map((c) => ({
@@ -39,27 +60,19 @@ function chansons() {
   }));
 }
 
-function philo() {
-  return BANQUE_PHILO.map((p) => ({
-    categorie: 'philo',
-    textes: p.textes,
-    solutions: [{ label: p.auteur, alias: p.alias ?? [] }],
-    info: p.info,
-  }));
-}
 
-function cinema() {
-  return BANQUE_CINEMA.map((f) => ({
-    categorie: 'cinema',
-    textes: f.textes,
-    solutions: [{ label: f.film, alias: f.alias ?? [] }],
-    info: f.info,
-  }));
-}
 
 /** Toutes les manches de la banque intégrée, filtrées par catégories actives. */
 export function manchesDeLaBanque(categoriesActives) {
-  const tout = [...chansons(), ...philo(), ...cinema()];
+  const tout = [
+    ...chansons(),
+    ...convertir(BANQUE_PHILO, 'philo', 'auteur'),
+    ...convertir(BANQUE_CINEMA, 'cinema', 'film'),
+    ...convertir(BANQUE_SERIES, 'series', 'serie'),
+    ...convertir(BANQUE_JEUXVIDEO, 'jeuxvideo', 'jeu'),
+    ...convertir(BANQUE_HISTOIRE, 'histoire', 'reponse'),
+    ...convertir(BANQUE_SCIENCE, 'science', 'reponse'),
+  ];
   if (!categoriesActives || !categoriesActives.size) return tout;
   return tout.filter((m) => categoriesActives.has(m.categorie));
 }
