@@ -43,6 +43,8 @@ const SNEAK_FACTOR = 0.5;         // marche furtive : silencieuse mais lente
 const SPRINT_FACTOR = 1.5;
 const SPEED_BONUS_FACTOR = 1.35;
 export const BODY_R = 0.3;        // rayon de collision
+export const GHOST_WALL = 2;      // mur « fantôme » : plus fin, coloré, franchissable
+const GHOST_WALL_RATE = 0.18;     // proportion des murs intérieurs rendus fantômes
 
 /**
  * UN SEUL pas de déplacement, partagé par le moteur (Host) et la prédiction locale
@@ -127,7 +129,7 @@ export const SKINS = Object.freeze([
   { id: 'renard',   nom: 'Renard',   couleur: '#ff9f45', emoji: '🦊',
     pouvoir: { nom: 'Sprint fulgurant', desc: 'Vitesse fortement accrue', type: 'dash', dureeMs: 3500, chargeMs: 16_000 } },
   { id: 'spectre',  nom: 'Spectre',  couleur: '#5fe0c8', emoji: '👻',
-    pouvoir: { nom: 'Pas fantôme', desc: 'Traverse le mur droit devant', type: 'phase', dureeMs: 0, chargeMs: 20_000 } },
+    pouvoir: { nom: 'Pas fantôme', desc: 'Traverse les murs bleutés (les plus fins)', type: 'phase', dureeMs: 6000, chargeMs: 20_000 } },
   { id: 'corbeau',  nom: 'Corbeau',  couleur: '#c86bff', emoji: '🐦‍⬛',
     pouvoir: { nom: 'Œil du corbeau', desc: 'Révèle brièvement les environs (flash local)', type: 'reveal', dureeMs: 0, chargeMs: 24_000 } },
   { id: 'taupe',    nom: 'Taupe',    couleur: '#b98a5a', emoji: '🦡',
@@ -223,9 +225,11 @@ export class TraqueEngine {
 
   /* ------------------------ labyrinthe ------------------------ */
 
-  isWall(cx, cy) {
+  isWall(cx, cy, traverseFantome = false) {
     if (cx < 0 || cy < 0 || cx >= this.cols || cy >= this.rows) return true;
-    return this.grid[cy][cx] === 1;
+    const v = this.grid[cy][cx];
+    if (v === GHOST_WALL) return !traverseFantome;   // franchissable par le Spectre actif
+    return v === 1;
   }
 
   buildMaze() {
@@ -266,6 +270,19 @@ export class TraqueEngine {
             g[y + dy][x + dx] = 0;
           }
         }
+      }
+    }
+    // Murs fantômes : on transforme une fraction des murs qui SÉPARENT deux
+    // cases de sol (verticalement ou horizontalement) en passages franchissables
+    // par le Spectre. Ils restent bloquants pour tout le monde d'autre, donc la
+    // connexité du labyrinthe est inchangée — ce sont juste des raccourcis
+    // réservés au pouvoir. Les murs du bord ne sont jamais convertis.
+    for (let y = 1; y < rows - 1; y += 1) {
+      for (let x = 1; x < cols - 1; x += 1) {
+        if (g[y][x] !== 1) continue;
+        const separe = (g[y][x - 1] === 0 && g[y][x + 1] === 0)   // sol à gauche et à droite
+          || (g[y - 1][x] === 0 && g[y + 1][x] === 0);            // sol au-dessus et au-dessous
+        if (separe && this.rng() < GHOST_WALL_RATE) g[y][x] = GHOST_WALL;
       }
     }
     this.grid = g;
@@ -458,30 +475,14 @@ export class TraqueEngine {
     if (t < p.powerReadyAt) return { ok: false, error: 'Pouvoir en recharge…' };
 
     // Application selon le type. Les effets à durée posent powerUntil ;
-    // les effets instantanés (phase, reveal, blink) agissent tout de suite.
+    // reveal est un flash instantané.
     switch (pouvoir.type) {
-      case 'invisible': p.powerUntil = t + pouvoir.dureeMs; break;
-      case 'dash':      p.powerUntil = t + pouvoir.dureeMs; break;
-      case 'silence':   p.powerUntil = t + pouvoir.dureeMs; break;
-      case 'vision':    p.powerUntil = t + pouvoir.dureeMs; break;
+      case 'invisible':
+      case 'dash':
+      case 'silence':
+      case 'vision':
+      case 'phase':     p.powerUntil = t + pouvoir.dureeMs; break;
       case 'reveal':    p.powerFlashAt = t; break;   // flash local, lu par getViewFor
-      case 'phase': {
-        // Saut court « à travers » : on avance de ~1,4 case dans la direction
-        // visée (ou de déplacement), en ignorant les murs, sans traverser le bord.
-        const a = Number.isFinite(p.input.aim) ? p.input.aim
-          : (p.input.dx || p.input.dy ? Math.atan2(p.input.dy, p.input.dx) : p.angle);
-        // Saut de 2 cases : assez pour franchir un mur d'une case d'épaisseur.
-        const nx = clamp(p.x + Math.cos(a) * 2.0, 1.2, this.cols - 1.2);
-        const ny = clamp(p.y + Math.sin(a) * 2.0, 1.2, this.rows - 1.2);
-        // Le corps a un rayon : la case d'arrivée ET les quatre coins doivent
-        // être libres, sinon le Spectre finirait à cheval sur un mur.
-        const libre = [
-          [nx - BODY_R, ny - BODY_R], [nx + BODY_R, ny - BODY_R],
-          [nx - BODY_R, ny + BODY_R], [nx + BODY_R, ny + BODY_R],
-        ].every(([cx, cy]) => !this.isWall(Math.floor(cx), Math.floor(cy)));
-        if (libre) { p.x = Math.round(nx * 100) / 100; p.y = Math.round(ny * 100) / 100; }
-        break;
-      }
       default: return { ok: false, error: 'Pouvoir inconnu.' };
     }
     p.powerReadyAt = t + pouvoir.chargeMs + (pouvoir.dureeMs || 0);
@@ -594,6 +595,14 @@ export class TraqueEngine {
       const moving = Math.hypot(inp.dx, inp.dy) > 0.05;
       p.moving = moving;
 
+      // Fin du Pas fantôme : si le Spectre s'est arrêté DANS un mur fantôme, on
+      // le raccompagne doucement vers le sol le plus proche (glissement continu,
+      // pas de téléportation), jusqu'à ce que son centre soit sur du sol.
+      if (this.grid[Math.floor(p.y)]?.[Math.floor(p.x)] === GHOST_WALL && !this.powerActif(p, 'phase')) {
+        this.glisserHorsMur(p, dt);
+        continue;   // il ne contrôle plus son perso tant qu'il est éjecté du mur
+      }
+
       const canSprint = inp.sprint && !inp.sneak && p.stamina > 1;
       const speed = this.speedOf(p, hidePhase);
 
@@ -613,7 +622,37 @@ export class TraqueEngine {
 
   /** Collision cercle/grille — exactement le code que l'invité exécute en local. */
   moveWithCollision(p, dx, dy) {
-    stepCollision(p, dx, dy, (x, y) => this.isWall(x, y));
+    // Le Spectre, pouvoir actif, franchit les murs fantômes (type 2).
+    const traverse = this.powerActif(p, 'phase');
+    stepCollision(p, dx, dy, (x, y) => this.isWall(x, y, traverse));
+  }
+
+  /**
+   * Le Spectre a fini son pouvoir dans un mur fantôme : on le fait GLISSER
+   * doucement vers le centre de la case de sol la plus proche (recherche en
+   * anneaux croissants), à vitesse limitée, sans jamais le téléporter.
+   */
+  glisserHorsMur(p, dt) {
+    const cx = Math.floor(p.x); const cy = Math.floor(p.y);
+    let best = null; let bestD = Infinity;
+    for (let r = 1; r <= 3 && !best; r += 1) {
+      for (let oy = -r; oy <= r; oy += 1) {
+        for (let ox = -r; ox <= r; ox += 1) {
+          if (Math.max(Math.abs(ox), Math.abs(oy)) !== r) continue;   // seulement l'anneau
+          const gx = cx + ox; const gy = cy + oy;
+          if (this.grid[gy]?.[gx] !== 0) continue;                    // doit être du sol
+          const tx = gx + 0.5; const ty = gy + 0.5;
+          const d = dist(p.x, p.y, tx, ty);
+          if (d < bestD) { bestD = d; best = { x: tx, y: ty }; }
+        }
+      }
+    }
+    if (!best) return;   // aucun sol proche (ne devrait pas arriver) : on laisse en place
+    const pas = 3.0 * dt;                       // vitesse d'éjection (cases/s)
+    const ang = Math.atan2(best.y - p.y, best.x - p.x);
+    p.x = Math.round((p.x + Math.cos(ang) * Math.min(pas, bestD)) * 100) / 100;
+    p.y = Math.round((p.y + Math.sin(ang) * Math.min(pas, bestD)) * 100) / 100;
+    p.moving = true;
   }
 
   /** Bruit de pas : c'est ce que le Chercheur « entend ». Furtif = silencieux. */

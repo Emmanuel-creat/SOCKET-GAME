@@ -298,7 +298,11 @@ class TraqueUI {
     if (moi && !this.isHost) {
       const active = complete.phase === 'traque' || complete.phase === 'cachette';
       if (!active || !moi.alive) this.pred.reset(moi.x, moi.y);
-      else this.pred.reconcilier(complete.t, moi, (x, y) => complete.grid?.[y]?.[x] === '1');
+      else {
+        const traverse = complete.me?.power?.actif && complete.me?.skin === 'spectre';
+        const mur = (x, y) => { const c = complete.grid?.[y]?.[x]; return c === '1' || (c === '2' && !traverse); };
+        this.pred.reconcilier(complete.t, moi, mur);
+      }
     }
 
     if (complete.phase !== this.lastPhase) {
@@ -679,10 +683,19 @@ class TraqueUI {
     c.width = Math.ceil(cols * tile);
     c.height = Math.ceil(rows * tile);
     const g = c.getContext('2d');
-    g.fillStyle = 'rgba(120,140,200,.10)';
     for (let y = 0; y < rows; y += 1) {
       for (let x = 0; x < cols; x += 1) {
-        if (v.grid[y][x] === '1') g.fillRect(x * tile, y * tile, tile + 0.5, tile + 0.5);
+        const cell = v.grid[y][x];
+        if (cell === '1') {
+          g.fillStyle = 'rgba(120,140,200,.10)';
+          g.fillRect(x * tile, y * tile, tile + 0.5, tile + 0.5);
+        } else if (cell === '2') {
+          // Mur fantôme : plus fin (centré dans la case) et d'un bleu lumineux,
+          // pour signaler qu'il est franchissable par le Spectre.
+          g.fillStyle = 'rgba(95,224,200,.30)';
+          const m = tile * 0.28;   // marge : le mur ne remplit pas toute la case
+          g.fillRect(x * tile + m, y * tile + m, tile - 2 * m + 0.5, tile - 2 * m + 0.5);
+        }
       }
     }
     this.mazeLayer = c;
@@ -715,7 +728,10 @@ class TraqueUI {
     const vv = this.view;
     if (!this.isHost && vv?.me && this.pred.pos && (vv.phase === 'traque' || vv.phase === 'cachette')) {
       const inp = this.axis();
-      this.pred.avancer(dtMs, inp, vv.me.speed ?? 0, (x, y) => vv.grid[y]?.[x] === '1');
+      // Le Spectre, pouvoir actif, franchit les murs fantômes ('2') ; sinon ils bloquent.
+      const traverse = vv.me.power?.actif && vv.me.skin === 'spectre';
+      const mur = (x, y) => { const c = vv.grid[y]?.[x]; return c === '1' || (c === '2' && !traverse); };
+      this.pred.avancer(dtMs, inp, vv.me.speed ?? 0, mur);
     }
     const v = this.view;
     if (!this.canvas || !v || !v.grid || !v.me) return;
@@ -745,7 +761,7 @@ class TraqueUI {
 
     // Position lissée des autres joueurs : lue dans le tampon horodaté. Le Host, lui,
     // affiche les entités telles quelles (il EST la vérité, il n'interpole personne).
-    const mur = (x, y) => v.grid?.[y]?.[x] === '1';
+    const mur = (x, y) => { const c = v.grid?.[y]?.[x]; return c === '1' || c === '2'; };
     const smooth = (ent) => (this.isHost ? { x: ent.x, y: ent.y } : this.interp.ou(ent, mur));
 
     // Halo du joueur (sa propre bulle de perception).
