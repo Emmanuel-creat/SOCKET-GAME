@@ -15,9 +15,19 @@
 
 /* ====================== RÉGLAGES ====================== */
 
-// Labyrinthe (dimensions impaires obligatoires pour la génération).
-export const COLS = 31;
-export const ROWS = 21;
+// Labyrinthe : quatre tailles au choix du Host (dimensions impaires
+// obligatoires pour la génération par backtracking). COLS/ROWS restent exportés
+// comme dimensions PAR DÉFAUT (= Moyen) pour la compatibilité ; chaque partie
+// utilise en réalité les dimensions de son option de taille.
+export const MAZE_SIZES = Object.freeze({
+  petit:  { nom: 'Petit',  cols: 21, rows: 15 },
+  moyen:  { nom: 'Moyen',  cols: 31, rows: 21 },
+  grand:  { nom: 'Grand',  cols: 41, rows: 27 },
+  geant:  { nom: 'Géant',  cols: 51, rows: 35 },
+});
+export const SIZE_DEFAULT = 'moyen';
+export const COLS = MAZE_SIZES[SIZE_DEFAULT].cols;
+export const ROWS = MAZE_SIZES[SIZE_DEFAULT].rows;
 const BRAID_RATE = 0.32;          // proportion d'impasses ouvertes (boucles → moins de pièges)
 
 // Temps.
@@ -25,9 +35,10 @@ export const TICK_MS = 50;        // 20 Hz chez le Host
 const HIDE_MS_DEFAULT = 20_000;   // temps de cachette (Chercheur figé et aveugle)
 const ROUND_MS_DEFAULT = 240_000; // chrono de la traque
 
-// Déplacements (en cases/seconde).
+// Déplacements (en cases/seconde). Le Chasseur (Chercheur) va 1,7× plus vite
+// que les cachés : on garde sa vitesse et on abaisse celle des cachés.
 const SPEED_SEEKER = 3.5;
-const SPEED_HIDER = 3.3;
+const SPEED_HIDER = 3.5 / 1.7;    // ≈ 2,06 — ratio chasseur/caché = 1,7
 const SNEAK_FACTOR = 0.5;         // marche furtive : silencieuse mais lente
 const SPRINT_FACTOR = 1.5;
 const SPEED_BONUS_FACTOR = 1.35;
@@ -94,23 +105,50 @@ const BONUS_SPAWN_MS = 12_000;
 const EFFECT_MS = { vitesse: 12_000, silence: 15_000, torche: 12_000, radar: 6000, sonar: 2500 };
 const SONAR_RANGE = 9;
 
+// Pouvoirs de skin.
+const POWER_DASH_FACTOR = 1.9;    // Renard : sprint fulgurant
+const POWER_VISION_CONE_MULT = 1.5;   // Panthère (Chercheur) : lampe élargie
+const POWER_VISION_FEEL_MULT = 2.4;   // Panthère (caché) : sent les proches de plus loin
+const POWER_REVEAL_RADIUS = 4.2;  // Corbeau : rayon du flash local
+const POWER_REVEAL_MS = 900;      // durée de ce flash
+
+// Chaque skin porte un POUVOIR ACTIF : le joueur le déclenche avec une touche
+// (input.power), il dure `dureeMs` puis se recharge pendant `chargeMs`. Le
+// pouvoir agit selon le rôle du porteur au moment de l'activation ; il est
+// pensé pour rester équilibré dans les deux camps.
+//  - sprintMult / silence : appliqués dans speedOf / le bruit ;
+//  - coneMult / rangeMult : appliqués à la lampe du Chercheur ;
+//  - blink : téléportation courte instantanée dans la direction visée ;
+//  - reveal : flash local façon détecteur, autour du porteur ;
+//  - phase : traverse un mur fin une fois (petit saut en avant sans collision).
 export const SKINS = Object.freeze([
-  { id: 'ombre', nom: 'Ombre', couleur: '#8b8ff0', emoji: '🥷' },
-  { id: 'renard', nom: 'Renard', couleur: '#ff9f45', emoji: '🦊' },
-  { id: 'spectre', nom: 'Spectre', couleur: '#5fe0c8', emoji: '👻' },
-  { id: 'corbeau', nom: 'Corbeau', couleur: '#c86bff', emoji: '🐦‍⬛' },
-  { id: 'taupe', nom: 'Taupe', couleur: '#b98a5a', emoji: '🦡' },
-  { id: 'panthere', nom: 'Panthère', couleur: '#ff5f8a', emoji: '🐈‍⬛' },
+  { id: 'ombre',    nom: 'Ombre',    couleur: '#8b8ff0', emoji: '🥷',
+    pouvoir: { nom: 'Invisibilité', desc: 'Disparaît des radars et du toucher', type: 'invisible', dureeMs: 5000, chargeMs: 22_000 } },
+  { id: 'renard',   nom: 'Renard',   couleur: '#ff9f45', emoji: '🦊',
+    pouvoir: { nom: 'Sprint fulgurant', desc: 'Vitesse fortement accrue', type: 'dash', dureeMs: 3500, chargeMs: 16_000 } },
+  { id: 'spectre',  nom: 'Spectre',  couleur: '#5fe0c8', emoji: '👻',
+    pouvoir: { nom: 'Pas fantôme', desc: 'Traverse le mur droit devant', type: 'phase', dureeMs: 0, chargeMs: 20_000 } },
+  { id: 'corbeau',  nom: 'Corbeau',  couleur: '#c86bff', emoji: '🐦‍⬛',
+    pouvoir: { nom: 'Œil du corbeau', desc: 'Révèle brièvement les environs (flash local)', type: 'reveal', dureeMs: 0, chargeMs: 24_000 } },
+  { id: 'taupe',    nom: 'Taupe',    couleur: '#b98a5a', emoji: '🦡',
+    pouvoir: { nom: 'Silence total', desc: 'Aucun bruit de pas', type: 'silence', dureeMs: 8000, chargeMs: 18_000 } },
+  { id: 'panthere', nom: 'Panthère', couleur: '#ff5f8a', emoji: '🐈‍⬛',
+    pouvoir: { nom: 'Vision perçante', desc: 'Chasseur : lampe élargie ; caché : sent les proches', type: 'vision', dureeMs: 7000, chargeMs: 20_000 } },
 ]);
+
+export const SKIN_BY_ID = Object.freeze(Object.fromEntries(SKINS.map((s) => [s.id, s])));
 
 export const DEFAULT_OPTIONS = Object.freeze({
   mode: 'rotation',        // 'rotation' (chacun chercheur une fois) | 'unique' (une manche)
+  taille: SIZE_DEFAULT,    // 'petit' | 'moyen' | 'grand' | 'geant'
   hideMs: HIDE_MS_DEFAULT,
   roundMs: ROUND_MS_DEFAULT,
   ballesParJoueur: BULLETS_PER_PLAYER,
   detecteurs: true,
   bonus: true,
 });
+
+export const SIZE_CHOICES = Object.freeze(Object.keys(MAZE_SIZES)); // petit→géant
 
 export const HIDE_CHOICES = Object.freeze([10_000, 20_000, 30_000]);
 export const ROUND_CHOICES = Object.freeze([180_000, 240_000, 360_000]);
@@ -143,6 +181,9 @@ export class TraqueEngine {
       stamina: STAMINA_MAX,
       bullets: 0,
       effects: {},
+      powerUntil: 0,        // fin de l'effet actif du pouvoir de skin
+      powerReadyAt: 0,      // instant où le pouvoir redevient utilisable
+      powerFlashAt: -1e9,   // dernier flash local (Œil du corbeau)
       score: 0,
       elims: 0,
       survies: 0,
@@ -183,21 +224,26 @@ export class TraqueEngine {
   /* ------------------------ labyrinthe ------------------------ */
 
   isWall(cx, cy) {
-    if (cx < 0 || cy < 0 || cx >= COLS || cy >= ROWS) return true;
+    if (cx < 0 || cy < 0 || cx >= this.cols || cy >= this.rows) return true;
     return this.grid[cy][cx] === 1;
   }
 
   buildMaze() {
+    // Dimensions de cette partie, d'après l'option de taille (repli sur Moyen).
+    const taille = MAZE_SIZES[this.options.taille] ?? MAZE_SIZES[SIZE_DEFAULT];
+    this.cols = taille.cols;
+    this.rows = taille.rows;
     // 1 = mur. Génération par backtracking sur les cases impaires.
     this.mapVersion = (this.mapVersion ?? 0) + 1;
-    const g = Array.from({ length: ROWS }, () => Array(COLS).fill(1));
+    const { cols, rows } = this;
+    const g = Array.from({ length: rows }, () => Array(cols).fill(1));
     const stack = [[1, 1]];
     g[1][1] = 0;
     while (stack.length) {
       const [x, y] = stack[stack.length - 1];
       const dirs = [[2, 0], [-2, 0], [0, 2], [0, -2]].filter(([dx, dy]) => {
         const nx = x + dx; const ny = y + dy;
-        return nx > 0 && ny > 0 && nx < COLS - 1 && ny < ROWS - 1 && g[ny][nx] === 1;
+        return nx > 0 && ny > 0 && nx < cols - 1 && ny < rows - 1 && g[ny][nx] === 1;
       });
       if (!dirs.length) { stack.pop(); continue; }
       const [dx, dy] = dirs[Math.floor(this.rng() * dirs.length)];
@@ -207,13 +253,13 @@ export class TraqueEngine {
     }
     // Tressage : on ouvre une partie des impasses pour créer des boucles
     // (un labyrinthe parfait est un piège mortel pour les cachés).
-    for (let y = 1; y < ROWS - 1; y += 2) {
-      for (let x = 1; x < COLS - 1; x += 2) {
+    for (let y = 1; y < rows - 1; y += 2) {
+      for (let x = 1; x < cols - 1; x += 2) {
         const open = [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([dx, dy]) => g[y + dy][x + dx] === 0);
         if (open.length === 1 && this.rng() < BRAID_RATE) {
           const walls = [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([dx, dy]) => {
             const nx = x + dx * 2; const ny = y + dy * 2;
-            return nx > 0 && ny > 0 && nx < COLS - 1 && ny < ROWS - 1 && g[y + dy][x + dx] === 1;
+            return nx > 0 && ny > 0 && nx < cols - 1 && ny < rows - 1 && g[y + dy][x + dx] === 1;
           });
           if (walls.length) {
             const [dx, dy] = walls[Math.floor(this.rng() * walls.length)];
@@ -224,8 +270,8 @@ export class TraqueEngine {
     }
     this.grid = g;
     this.floors = [];
-    for (let y = 0; y < ROWS; y += 1) {
-      for (let x = 0; x < COLS; x += 1) if (g[y][x] === 0) this.floors.push({ x, y });
+    for (let y = 0; y < rows; y += 1) {
+      for (let x = 0; x < cols; x += 1) if (g[y][x] === 0) this.floors.push({ x, y });
     }
   }
 
@@ -286,6 +332,7 @@ export class TraqueEngine {
     if (this.phase !== 'setup') return { ok: false, error: 'La partie a commencé.' };
     const o = { ...this.options, ...options };
     o.mode = o.mode === 'unique' ? 'unique' : 'rotation';
+    o.taille = MAZE_SIZES[o.taille] ? o.taille : DEFAULT_OPTIONS.taille;
     o.hideMs = HIDE_CHOICES.includes(Number(o.hideMs)) ? Number(o.hideMs) : DEFAULT_OPTIONS.hideMs;
     o.roundMs = ROUND_CHOICES.includes(Number(o.roundMs)) ? Number(o.roundMs) : DEFAULT_OPTIONS.roundMs;
     o.ballesParJoueur = clamp(Math.round(Number(o.ballesParJoueur) || BULLETS_PER_PLAYER), 1, 5);
@@ -339,6 +386,7 @@ export class TraqueEngine {
       p.input = { dx: 0, dy: 0, aim: null, sneak: false, sprint: false };
       p.bullets = p.role === 'chercheur' ? bullets : 0;
       p.lastShot = -1e9; p.lastNoise = -1e9; p.moving = false;
+      p.powerUntil = 0; p.powerReadyAt = 0; p.powerFlashAt = -1e9;
       const pos = this.randomFloor(spawns, p.role === 'chercheur' ? 0 : 6);
       spawns.push(pos);
       p.x = pos.x; p.y = pos.y; p.angle = 0;
@@ -394,6 +442,73 @@ export class TraqueEngine {
       sprint: !!input.sprint,
     };
     return { ok: true };
+  }
+
+  /** Déclenche le pouvoir actif du skin du joueur (touche unique + recharge). */
+  activatePower(pid) {
+    const p = this.playerOf(pid);
+    if (!p || !p.alive || (this.phase !== 'cachette' && this.phase !== 'traque')) {
+      return { ok: false, error: 'Pas de pouvoir pour le moment.' };
+    }
+    // Le Chercheur reste figé pendant la cachette : pas de pouvoir non plus.
+    if (this.phase === 'cachette' && p.role === 'chercheur') return { ok: false, error: 'Vous comptez…' };
+    const pouvoir = SKIN_BY_ID[p.skin]?.pouvoir;
+    if (!pouvoir) return { ok: false, error: 'Aucun pouvoir.' };
+    const t = this.now();
+    if (t < p.powerReadyAt) return { ok: false, error: 'Pouvoir en recharge…' };
+
+    // Application selon le type. Les effets à durée posent powerUntil ;
+    // les effets instantanés (phase, reveal, blink) agissent tout de suite.
+    switch (pouvoir.type) {
+      case 'invisible': p.powerUntil = t + pouvoir.dureeMs; break;
+      case 'dash':      p.powerUntil = t + pouvoir.dureeMs; break;
+      case 'silence':   p.powerUntil = t + pouvoir.dureeMs; break;
+      case 'vision':    p.powerUntil = t + pouvoir.dureeMs; break;
+      case 'reveal':    p.powerFlashAt = t; break;   // flash local, lu par getViewFor
+      case 'phase': {
+        // Saut court « à travers » : on avance de ~1,4 case dans la direction
+        // visée (ou de déplacement), en ignorant les murs, sans traverser le bord.
+        const a = Number.isFinite(p.input.aim) ? p.input.aim
+          : (p.input.dx || p.input.dy ? Math.atan2(p.input.dy, p.input.dx) : p.angle);
+        // Saut de 2 cases : assez pour franchir un mur d'une case d'épaisseur.
+        const nx = clamp(p.x + Math.cos(a) * 2.0, 1.2, this.cols - 1.2);
+        const ny = clamp(p.y + Math.sin(a) * 2.0, 1.2, this.rows - 1.2);
+        // Le corps a un rayon : la case d'arrivée ET les quatre coins doivent
+        // être libres, sinon le Spectre finirait à cheval sur un mur.
+        const libre = [
+          [nx - BODY_R, ny - BODY_R], [nx + BODY_R, ny - BODY_R],
+          [nx - BODY_R, ny + BODY_R], [nx + BODY_R, ny + BODY_R],
+        ].every(([cx, cy]) => !this.isWall(Math.floor(cx), Math.floor(cy)));
+        if (libre) { p.x = Math.round(nx * 100) / 100; p.y = Math.round(ny * 100) / 100; }
+        break;
+      }
+      default: return { ok: false, error: 'Pouvoir inconnu.' };
+    }
+    p.powerReadyAt = t + pouvoir.chargeMs + (pouvoir.dureeMs || 0);
+    return { ok: true };
+  }
+
+  /** true si le pouvoir à effet-durée du joueur est actif maintenant. */
+  powerActif(p, type) {
+    if (this.now() >= p.powerUntil) return false;
+    return SKIN_BY_ID[p.skin]?.pouvoir?.type === type;
+  }
+
+  /** État du pouvoir pour l'UI : nom, description, actif/recharge/prêt. */
+  powerStatus(p, t = this.now()) {
+    const pouvoir = SKIN_BY_ID[p.skin]?.pouvoir;
+    if (!pouvoir) return null;
+    const actif = t < p.powerUntil;
+    const enCharge = t < p.powerReadyAt;
+    return {
+      nom: pouvoir.nom,
+      desc: pouvoir.desc,
+      actif,
+      pret: !enCharge,
+      resteMs: actif ? p.powerUntil - t : 0,          // temps d'effet restant
+      chargeMs: enCharge ? p.powerReadyAt - t : 0,    // temps avant réutilisation
+      chargeTotalMs: pouvoir.chargeMs + (pouvoir.dureeMs || 0),
+    };
   }
 
   shoot(pid) {
@@ -462,6 +577,7 @@ export class TraqueEngine {
     if (inp.sneak) speed *= SNEAK_FACTOR;
     else if (canSprint) speed *= SPRINT_FACTOR;
     if (p.effects.vitesse) speed *= SPEED_BONUS_FACTOR;
+    if (this.powerActif(p, 'dash')) speed *= POWER_DASH_FACTOR;   // Renard
     return speed;
   }
 
@@ -504,6 +620,7 @@ export class TraqueEngine {
   emitNoise(p, sprinting, t) {
     if (p.role === 'chercheur') return;      // le Chercheur, lui, se signale par sa lampe
     if (p.input.sneak || p.effects.silence) return;
+    if (this.powerActif(p, 'silence')) return;   // Taupe : silence total
     const interval = sprinting ? NOISE_SPRINT_INTERVAL : NOISE_WALK_INTERVAL;
     if (t - p.lastNoise < interval) return;
     p.lastNoise = t;
@@ -692,6 +809,7 @@ export class TraqueEngine {
       case 'skin': return this.setSkin(pid, action.skin);
       case 'start': return this.start(pid);
       case 'input': return this.setInput(pid, action);
+      case 'power': return this.activatePower(pid);
       case 'shoot': return this.shoot(pid);
       case 'next-round': return this.nextRound(pid);
       case 'chat': return this.addChat(pid, action.text);
@@ -705,16 +823,24 @@ export class TraqueEngine {
   seenByTorch(seeker, x, y) {
     const d = dist(seeker.x, seeker.y, x, y);
     if (d <= TOUCH_RADIUS) return this.hasLOS(seeker.x, seeker.y, x, y);
-    const range = seeker.effects.torche ? TORCH_BONUS_RANGE : CONE_RANGE;
+    // Vision (Panthère, Chercheur) : lampe plus longue et plus large le temps du pouvoir.
+    const vision = this.powerActif(seeker, 'vision') && seeker.role === 'chercheur' ? POWER_VISION_CONE_MULT : 1;
+    const range = (seeker.effects.torche ? TORCH_BONUS_RANGE : CONE_RANGE) * vision;
     if (d > range) return false;
-    const half = ((seeker.effects.torche ? TORCH_BONUS_HALF_DEG : CONE_HALF_DEG) * Math.PI) / 180;
+    const half = ((seeker.effects.torche ? TORCH_BONUS_HALF_DEG : CONE_HALF_DEG) * vision * Math.PI) / 180;
     if (angDiff(Math.atan2(y - seeker.y, x - seeker.x), seeker.angle) > half) return false;
     return this.hasLOS(seeker.x, seeker.y, x, y);
   }
 
   /** Un flash révèle tout le monde dans son rayon — c'est le cœur du jeu. */
   inFlash(x, y) {
-    return this.flashes.some((f) => dist(f.x, f.y, x, y) <= FLASH_RADIUS);
+    if (this.flashes.some((f) => dist(f.x, f.y, x, y) <= FLASH_RADIUS)) return true;
+    // Œil du corbeau : chaque porteur ayant déclenché un flash local récent
+    // révèle les alentours de SA position, comme un détecteur ponctuel.
+    const t = this.now();
+    return this.players.some((p) => p.alive
+      && t - p.powerFlashAt < POWER_REVEAL_MS
+      && dist(p.x, p.y, x, y) <= POWER_REVEAL_RADIUS);
   }
 
   /**
@@ -749,8 +875,8 @@ export class TraqueEngine {
       isHost: pid === this.hostId,
       // Statique : la carte n'est transmise qu'une fois par manche.
       mapVersion: this.mapVersion,
-      cols: aDejaLaCarte ? undefined : COLS,
-      rows: aDejaLaCarte ? undefined : ROWS,
+      cols: aDejaLaCarte ? undefined : this.cols,
+      rows: aDejaLaCarte ? undefined : this.rows,
       grid: aDejaLaCarte || !this.grid ? undefined : this.grid.map((r) => r.join('')),
       timeLeft: (this.phase === 'cachette' || this.phase === 'traque') ? Math.max(0, this.phaseEnd - t) : 0,
       rosterVersion: this.rosterVersion,
@@ -766,6 +892,7 @@ export class TraqueEngine {
         effects: { ...me.effects }, lastBonus: me.lastBonus ?? null,
         speed: this.speedOf(me),
         inputTs: me.inputTs ?? null, inputAt: me.inputAt ?? null,
+        power: this.powerStatus(me, t),
       } : null,
       seekerName: this.seeker?.pseudo ?? null,
       // Différentiel : uniquement les messages que le destinataire n'a pas encore.
@@ -802,14 +929,23 @@ export class TraqueEngine {
     const seen = new Set();
     const push = (p, how) => { if (!seen.has(p.id)) { seen.add(p.id); visibles.push(this.publicOf(p, how)); } };
 
+    // Portée « ressenti » du destinataire : la Panthère (caché) sent de plus loin.
+    const feelR = HIDER_FEEL_RADIUS * (this.powerActif(me, 'vision') && me.role !== 'chercheur' ? POWER_VISION_FEEL_MULT : 1);
+
     for (const p of this.players) {
       if (!p.alive || p.id === pid) continue;
 
-      // 1. Les flashs révèlent à TOUT LE MONDE ceux qui se trouvent dedans.
-      if (this.inFlash(p.x, p.y)) { push(p, 'flash'); continue; }
+      // Ombre : tant que son invisibilité est active, ce caché n'apparaît dans
+      // AUCUNE vue de repérage (il reste attrapable au contact réel, géré à part).
+      const invisible = p.role !== 'chercheur' && this.powerActif(p, 'invisible');
+
+      // 1. Les flashs révèlent à TOUT LE MONDE ceux qui se trouvent dedans…
+      //    sauf l'Ombre, que rien ne trahit pendant son pouvoir.
+      if (!invisible && this.inFlash(p.x, p.y)) { push(p, 'flash'); continue; }
 
       if (me.role === 'chercheur') {
-        // 2. Le cône de la lampe (+ le contact).
+        if (invisible) continue;   // insensible au cône, au sonar, au toucher visuel
+        // 2. Le cône de la lampe (+ le contact) — élargi par la Vision (Panthère).
         if (this.seenByTorch(me, p.x, p.y)) { push(p, 'lampe'); continue; }
         // 3. Sonar : révèle brièvement les alentours, murs compris.
         if (me.effects.sonar && dist(me.x, me.y, p.x, p.y) <= SONAR_RANGE) { push(p, 'sonar'); continue; }
@@ -821,8 +957,8 @@ export class TraqueEngine {
           if (d <= LIGHT_VISIBLE_RANGE && this.hasLOS(me.x, me.y, p.x, p.y)) { push(p, 'lampe-visible'); continue; }
           // 5. Éclairé par sa propre lampe si l'on est dans le cône : il nous voit, on le voit.
           if (this.seenByTorch(p, me.x, me.y)) { push(p, 'lampe-visible'); continue; }
-        } else if (dist(me.x, me.y, p.x, p.y) <= HIDER_FEEL_RADIUS && this.hasLOS(me.x, me.y, p.x, p.y)) {
-          // 6. Dans le noir, on devine un autre caché à bout portant.
+        } else if (!invisible && dist(me.x, me.y, p.x, p.y) <= feelR && this.hasLOS(me.x, me.y, p.x, p.y)) {
+          // 6. Dans le noir, on devine un autre caché à bout portant (Panthère : plus loin).
           push(p, 'proximite');
         }
       }

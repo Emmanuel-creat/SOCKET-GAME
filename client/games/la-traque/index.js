@@ -9,7 +9,7 @@
  * lancer de rayons, flashs, bruits. Les murs sont dessinés en très sombre —
  * le labyrinthe n'est pas un secret, les POSITIONS le sont.
  */
-import { TraqueEngine, SKINS, COLS, ROWS, TICK_MS, HIDE_CHOICES, ROUND_CHOICES, stepCollision } from './engine.js';
+import { TraqueEngine, SKINS, COLS, ROWS, TICK_MS, HIDE_CHOICES, ROUND_CHOICES, MAZE_SIZES, SIZE_CHOICES, stepCollision } from './engine.js';
 import { Predictor } from '../shared/predictor.js';
 import { Interpolator } from '../shared/interpolator.js';
 
@@ -56,6 +56,12 @@ const CSS = `
 .trq__stick i { position: absolute; width: 46px; height: 46px; border-radius: 50%; background: rgba(255,255,255,.28); left: 36px; top: 36px; }
 .trq__btns { display: flex; flex-direction: column; gap: 8px; justify-content: flex-end; pointer-events: auto; }
 .trq__btns button { width: 70px; height: 70px; border-radius: 50%; border: 1px solid rgba(255,255,255,.2); background: rgba(255,255,255,.08); color: inherit; font-size: 1.4rem; }
+.trq__btns button.is-ready { border-color: #ffd76b; box-shadow: 0 0 14px rgba(255,215,107,.5); }
+.trq__btns button.is-on { border-color: #5fe0c8; box-shadow: 0 0 16px rgba(95,224,200,.7); background: rgba(95,224,200,.22); }
+.trq__btns button:disabled { opacity: .4; }
+.trq__pw { font-size: .78rem; padding: 2px 9px; border-radius: 99px; background: rgba(150,150,170,.15); border: 1px solid rgba(150,150,170,.35); }
+.trq__pw--ready { background: rgba(255,215,107,.18); border-color: rgba(255,215,107,.55); color: #ffe6a0; }
+.trq__pw--on { background: rgba(95,224,200,.2); border-color: rgba(95,224,200,.6); color: #bff6ec; }
 .trq__setup { display: grid; gap: 8px; max-width: 520px; margin: 0 auto; }
 .trq__setup label, .trq__row { display: flex; gap: 8px; align-items: center; background: rgba(0,0,0,.22); border: 1px solid var(--glass-border, rgba(255,255,255,.1)); border-radius: 10px; padding: 8px 10px; font-size: .85rem; }
 .trq__setup select { margin-left: auto; background: rgba(0,0,0,.35); color: inherit; border: 1px solid rgba(255,255,255,.15); border-radius: 8px; padding: 5px; }
@@ -341,6 +347,8 @@ class TraqueUI {
       const k = e.code;
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(k)) e.preventDefault();
       if (k === 'Space') { this.act({ a: 'shoot' }); return; }
+      // Pouvoir de skin : touche A (ou &, même emplacement AZERTY/QWERTY).
+      if (k === 'KeyA') { if (!e.repeat) this.act({ a: 'power' }); return; }
       this.keys.add(k);
       this.sendInput();
     };
@@ -448,8 +456,17 @@ class TraqueUI {
       modeSel.value = v.options.mode;
       modeSel.addEventListener('change', () => this.act({ a: 'configure', options: { mode: modeSel.value } }));
 
+      // Taille du labyrinthe (valeur texte, comme le mode).
+      const tailleSel = h('select', {}, SIZE_CHOICES.map((id) => {
+        const t = MAZE_SIZES[id];
+        return h('option', { value: id }, `${t.nom} (${t.cols}×${t.rows})`);
+      }));
+      tailleSel.value = v.options.taille ?? 'moyen';
+      tailleSel.addEventListener('change', () => this.act({ a: 'configure', options: { taille: tailleSel.value } }));
+
       box.append(
         h('div', { className: 'trq__row' }, [h('b', {}, 'Déroulement'), modeSel]),
+        h('div', { className: 'trq__row' }, [h('b', {}, 'Taille du labyrinthe'), tailleSel]),
         sel('Temps de cachette', 'hideMs', HIDE_CHOICES, (c) => `${c / 1000} s`),
         sel('Durée de la traque', 'roundMs', ROUND_CHOICES, (c) => `${c / 60000} min`),
         sel('Balles par joueur', 'ballesParJoueur', [1, 2, 3], (c) => `×${c} (soit ${c * v.roster.length} balles)`),
@@ -519,8 +536,9 @@ class TraqueUI {
     sprint.addEventListener('pointerdown', () => { this.sprintBtn = true; this.sendInput(true); });
     sprint.addEventListener('pointerup', () => { this.sprintBtn = false; this.sendInput(true); });
     const fire = h('button', { title: 'Tirer', onClick: () => this.act({ a: 'shoot' }) }, '🔫');
+    this.powerBtn = h('button', { title: 'Pouvoir', onClick: () => this.act({ a: 'power' }) }, '✨');
 
-    return h('div', { className: 'trq__pad' }, [stick, h('div', { className: 'trq__btns' }, [sneak, sprint, fire])]);
+    return h('div', { className: 'trq__pad' }, [stick, h('div', { className: 'trq__btns' }, [sneak, sprint, this.powerBtn, fire])]);
   }
 
   bindCanvas() {
@@ -587,6 +605,20 @@ class TraqueUI {
     bits.push(h('span', {}, ['💪 ', h('span', { className: 'trq__bar' }, h('i', { style: `width:${Math.round(me.stamina)}%` }))]));
     const fx = Object.keys(me.effects ?? {});
     if (fx.length) bits.push(h('span', { className: 'trq__fx' }, fx.map((k) => h('span', {}, FX_LABEL[k] ?? k))));
+    // Pouvoir de skin : nom + état (actif / recharge / prêt), touche A.
+    const pw = me.power;
+    if (pw) {
+      const etat = pw.actif ? `⚡ ${Math.ceil(pw.resteMs / 1000)}s`
+        : pw.pret ? '✨ prêt (A)'
+          : `⏳ ${Math.ceil(pw.chargeMs / 1000)}s`;
+      bits.push(h('span', { className: pw.actif ? 'trq__pw trq__pw--on' : pw.pret ? 'trq__pw trq__pw--ready' : 'trq__pw' },
+        `${pw.nom} — ${etat}`));
+      if (this.powerBtn) {
+        this.powerBtn.disabled = !pw.pret && !pw.actif;
+        this.powerBtn.classList.toggle('is-ready', pw.pret && !pw.actif);
+        this.powerBtn.classList.toggle('is-on', pw.actif);
+      }
+    }
     this.hudEl.replaceChildren(...bits);
 
     if (this.overlay) {
@@ -627,22 +659,29 @@ class TraqueUI {
 
   /* ------------------------- rendu ------------------------- */
 
+  /** Dimensions du labyrinthe courant (issues de la vue ; repli sur le défaut). */
+  dims() {
+    return { cols: this.state?.cols ?? COLS, rows: this.state?.rows ?? ROWS };
+  }
+
   geom(rect) {
-    const tile = Math.min(rect.width / COLS, rect.height / ROWS);
-    return { tile, ox: (rect.width - tile * COLS) / 2, oy: (rect.height - tile * ROWS) / 2 };
+    const { cols, rows } = this.dims();
+    const tile = Math.min(rect.width / cols, rect.height / rows);
+    return { tile, ox: (rect.width - tile * cols) / 2, oy: (rect.height - tile * rows) / 2 };
   }
 
   /** Le labyrinthe, peint une seule fois hors écran (re-fait si la taille change). */
   mazeImage(v, tile) {
+    const cols = v.cols ?? COLS; const rows = v.rows ?? ROWS;
     const cle = `${v.mapVersion}|${Math.round(tile * 4)}`;
     if (this.mazeLayer && this.mazeKey === cle) return this.mazeLayer;
     const c = document.createElement('canvas');
-    c.width = Math.ceil(COLS * tile);
-    c.height = Math.ceil(ROWS * tile);
+    c.width = Math.ceil(cols * tile);
+    c.height = Math.ceil(rows * tile);
     const g = c.getContext('2d');
     g.fillStyle = 'rgba(120,140,200,.10)';
-    for (let y = 0; y < ROWS; y += 1) {
-      for (let x = 0; x < COLS; x += 1) {
+    for (let y = 0; y < rows; y += 1) {
+      for (let x = 0; x < cols; x += 1) {
         if (v.grid[y][x] === '1') g.fillRect(x * tile, y * tile, tile + 0.5, tile + 0.5);
       }
     }
