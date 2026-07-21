@@ -100,7 +100,11 @@ export class SocketClient {
     s.on(EVENTS.ADMIN_STATS, (stats) => bus.emit('admin:stats', stats));
 
     s.on(EVENTS.SYS_NOTIFICATION, ({ type, message }) => bus.emit('notify', { type, message }));
-    s.on(EVENTS.SYS_ERROR, ({ message }) => bus.emit('notify', { type: 'error', message }));
+    s.on(EVENTS.SYS_ERROR, ({ code, message }) => {
+      bus.emit('sys:error', { code, message });
+      // Le refus de pseudo a sa propre page plein écran : pas de toast en doublon.
+      if (code !== 'PSEUDO_RESERVE') bus.emit('notify', { type: 'error', message });
+    });
 
     s.on('disconnect', () => bus.emit('notify', { type: 'error', message: 'Connexion au serveur perdue.' }));
   }

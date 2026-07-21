@@ -4,11 +4,13 @@
  * création du profil → menu principal.
  */
 import { SocketClient } from './core/SocketClient.js';
+import { bus } from './core/EventBus.js';
 import { Router } from './core/Router.js';
 import { store } from './core/Store.js';
 import { Notifications } from './ui/Notifications.js';
 import { openProfileModal, openSettingsModal, openQuitModal } from './ui/modals.js';
 import { initSidebarMobile } from './ui/sidebarMobile.js';
+import { initPageRefus } from './ui/pageRefus.js';
 import { PlayView } from './views/PlayView.js';
 import { RoomsView } from './views/RoomsView.js';
 import { PlayersView } from './views/PlayersView.js';
@@ -18,6 +20,9 @@ import { LABELS } from '/shared/constants.js';
 
 // --- Menu mobile (escamotable ≤ 820 px ; sans effet sur grand écran) ---
 initSidebarMobile();
+
+// --- Page de refus des pseudos réservés (code serveur PSEUDO_RESERVE) ---
+initPageRefus(bus);
 
 // --- Services ---
 const socket = new SocketClient();
