@@ -66,7 +66,7 @@ export function afficherPageRefus(message) {
       h('h1', { className: 'refus-verset' },
         '« Heureux l\u2019homme qui a trouv\u00e9 la sagesse, et l\u2019homme qui poss\u00e8de l\u2019intelligence ! »'),
       h('p', { className: 'refus-message' },
-        message || 'Ce pseudo n\u2019est pas disponible. Choisissez-en un autre.'),
+        message || 'Votre pseudo n\u2019est pas Autorisé. Choisissez-en un autre.'),
       h('a', {
         className: 'refus-btn',
         href: LIEN_DON,
@@ -76,7 +76,7 @@ export function afficherPageRefus(message) {
       h('button', {
         className: 'refus-retry',
         onclick: () => window.location.reload(),
-      }, 'Réessayer avec un autre pseudo'),
+      }, 'Le racisme, l\'homophobie, la misogynie et l\'aigreur ne sont pas acceptés chez nous. Désolé.'),
     ]),
   ]);
 
