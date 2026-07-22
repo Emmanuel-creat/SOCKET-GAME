@@ -12,9 +12,25 @@ import { GAME_STATE, LABELS } from '/shared/constants.js';
 export function GameCard(game, onEnter) {
   const available = game.etat === GAME_STATE.AVAILABLE;
 
+  // Couverture : utilise l'image si le fichier existe vraiment, sinon retombe sur
+  // l'emoji. On ne peut pas savoir à l'avance si /assets/cover.png a été fourni —
+  // onerror bascule sur l'emoji si l'image ne charge pas (404, format invalide, etc).
+  const emojiCover = el('div', { className: 'game-card__cover', 'aria-hidden': 'true' }, [game.icone]);
+  let cover = emojiCover;
+  if (game.image) {
+    const img = el('img', {
+      className: 'game-card__cover game-card__cover--img',
+      src: game.image,
+      alt: '',
+      'aria-hidden': 'true',
+      loading: 'lazy',
+      onError: () => { img.replaceWith(emojiCover); },
+    });
+    cover = img;
+  }
+
   return el('article', { className: 'card game-card' }, [
-    // Illustration : l'icône sert de couverture tant que l'image n'existe pas.
-    el('div', { className: 'game-card__cover', 'aria-hidden': 'true' }, [game.icone]),
+    cover,
     el('div', { className: 'game-card__body' }, [
       el('div', { className: 'game-card__head' }, [
         el('h3', { className: 'game-card__name' }, [game.nom]),
