@@ -6,7 +6,7 @@
       "nom": "Loup-Garou",
       "description": "Nuits meurtrières, débats et bluff à l'écrit : le moteur joue le meneur.",
       "icone": "🐺",
-      "image": "/games/loup-garou/assets/cover.png",
+      "image": "/games/loup-garou/assets/cover.jpg",
       "joueursMin": 5,
       "joueursMax": 16,
       "etat": "disponible",
