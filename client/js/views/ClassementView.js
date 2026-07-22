@@ -54,6 +54,48 @@ export class ClassementView {
     ]);
   }
 
+  /**
+   * Outils de fichier : le classement vit dans un fichier servi par le site
+   * (/classement.json). On peut le télécharger pour le garder, et le restaurer
+   * après un redéploiement — l'hébergement gratuit efface le disque à chaque
+   * mise en ligne et à chaque réveil du service.
+   */
+  outilsFichier() {
+    const telecharger = el('a', {
+      className: 'clsmt__btn',
+      href: '/classement.json',
+      download: 'classement.json',
+    }, ['⬇️ Télécharger le fichier']);
+
+    const champ = el('input', { type: 'file', accept: 'application/json', style: 'display:none' });
+    champ.addEventListener('change', () => this.restaurer(champ.files?.[0]));
+    const restaurer = el('button', { className: 'clsmt__btn', onclick: () => champ.click() },
+      ['⬆️ Restaurer une sauvegarde']);
+
+    this.retourEl = el('span', { className: 'clsmt__retour' }, ['']);
+    return el('div', { className: 'clsmt__outils' }, [telecharger, restaurer, champ, this.retourEl]);
+  }
+
+  async restaurer(fichier) {
+    if (!fichier) return;
+    const code = window.prompt('Code administrateur :');
+    if (!code) return;
+    try {
+      const texte = await fichier.text();
+      const rep = await fetch('/classement/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Code': code },
+        body: texte,
+      });
+      const data = await rep.json();
+      if (!rep.ok) throw new Error(data.error || `Erreur ${rep.status}`);
+      this.retourEl.textContent = `✅ Restauré — ${data.joueurs} joueur(s)`;
+      this.demander();
+    } catch (err) {
+      this.retourEl.textContent = `❌ ${err.message}`;
+    }
+  }
+
   render() {
     if (this.container.hidden) return;
     const top = this.data?.top ?? [];
@@ -84,6 +126,7 @@ export class ClassementView {
         'Votre palmarès est rattaché à votre connexion et à ce navigateur : ',
         'vous pouvez changer de pseudo sans perdre vos victoires.',
       ]),
+      this.outilsFichier(),
     );
   }
 }

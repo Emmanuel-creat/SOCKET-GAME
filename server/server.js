@@ -38,6 +38,28 @@ app.use('/shared', express.static(path.join(ROOT, 'shared')));
 // Petit endpoint de santé, utile en supervision/déploiement.
 app.get('/health', (_req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
 
+/* ------------------------------------------------------------------ *
+ * Classement : le fichier de données, servi en dur par le site.
+ *
+ * GET  /classement.json          → le fichier (toujours à jour, lu en mémoire)
+ * POST /classement/import        → restaure un fichier (protégé par le code admin)
+ *
+ * L'import existe parce que l'hébergement gratuit efface le disque à chaque
+ * redéploiement et à chaque réveil : il suffit de re-téléverser le dernier
+ * fichier téléchargé pour retrouver le palmarès.
+ * ------------------------------------------------------------------ */
+app.get('/classement.json', (_req, res) => {
+  res.type('application/json').send(classement.serialiser());
+});
+
+app.post('/classement/import', express.json({ limit: '2mb' }), (req, res) => {
+  const code = req.get('X-Admin-Code') || req.query.code || '';
+  if (!admin.codeValide(String(code))) return res.status(403).json({ error: 'Code incorrect.' });
+  const n = classement.importer(req.body);
+  if (n < 0) return res.status(400).json({ error: 'Fichier invalide.' });
+  res.json({ ok: true, joueurs: n });
+});
+
 // --- Serveur HTTP + Socket.IO ---
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
@@ -57,10 +79,14 @@ const users = new UserManager();
 const rooms = new RoomManager({ users });
 const lobby = new LobbyManager({ io, users, rooms, gameRegistry });
 const admin = new AdminService({ io, users, rooms, gameRegistry });
-// Classement général (victoires tous jeux). Le fichier peut être placé sur un
-// disque persistant via CLASSEMENT_FILE ; sinon il vit dans le dossier data/
-// local (réinitialisé à chaque redéploiement sur une offre sans disque).
-const classement = new ClassementService(process.env.CLASSEMENT_FILE || './data/classement.json');
+// Classement général (victoires tous jeux). Le stockage est choisi tout seul :
+// GitHub Gist si GIST_ID + GITHUB_TOKEN sont fournis (indispensable sur une
+// offre sans disque persistant, où le système de fichiers est effacé à chaque
+// redéploiement ET à chaque réveil), fichier local sinon.
+const classement = new ClassementService();
+classement.charger().then(() => {
+  console.log(`[arcade] Classement chargé depuis ${classement.stockage.nom} — ${classement.entrees.size} joueur(s)`);
+});
 const diagnostics = new DiagnosticService({ io, users, rooms, gameRegistry, admin });
 // Grâce de reconnexion : un joueur en partie qui perd sa socket garde sa place
 // (et son identifiant) le temps de revenir — un F5 n'est plus une exclusion.

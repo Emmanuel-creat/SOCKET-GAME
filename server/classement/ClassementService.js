@@ -22,10 +22,13 @@
  * elle n'empêche pas un Host malveillant de déclarer un faux résultat.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { creerStockage } from './stockage.js';
 
-const SAVE_DEBOUNCE_MS = 2000;
+// Écriture groupée : sur un stockage distant (Gist), chaque écriture est un
+// appel réseau. On attend donc quelques secondes après la dernière partie
+// plutôt que d'écrire à chaque fin de partie.
+const SAVE_DEBOUNCE_MS = 5000;
+const RETRY_MS = 30_000;        // nouvelle tentative si le réseau a échoué
 const MAX_ENTREES = 5000;          // garde-fou mémoire
 const PSEUDO_MAX = 32;
 
@@ -55,19 +58,31 @@ export function cleIdentite(ip, cid) {
 }
 
 export class ClassementService {
-  /** @param {string} fichier chemin du JSON de persistance */
-  constructor(fichier) {
-    this.fichier = fichier;
+  /**
+   * @param {{lire:Function, ecrire:Function, nom:string}} [stockage]
+   *   Adaptateur de persistance. Par défaut, choisi d'après l'environnement :
+   *   GitHub Gist si GIST_ID + GITHUB_TOKEN sont fournis, fichier local sinon.
+   */
+  constructor(stockage = creerStockage()) {
+    this.stockage = stockage;
     /** @type {Map<string, {pseudo:string, victoires:number, parties:number, parJeu:Object, maj:number}>} */
     this.entrees = new Map();
     this._timer = null;
-    this.charger();
+    this._ecritureEnCours = false;
+    this._aRejouer = false;      // une modification est arrivée pendant l'écriture
+    this.pret = false;           // true une fois les données chargées
   }
 
-  charger() {
+  /**
+   * Charge les données depuis le stockage. À appeler au démarrage. Un échec
+   * (réseau, jeton invalide) n'empêche pas le serveur de tourner : le
+   * classement démarre vide et repartira à la prochaine écriture réussie.
+   */
+  async charger() {
     try {
-      if (!existsSync(this.fichier)) return;
-      const brut = JSON.parse(readFileSync(this.fichier, 'utf8'));
+      const texte = await this.stockage.lire();
+      if (!texte) { this.pret = true; return; }
+      const brut = JSON.parse(texte);
       for (const [cle, val] of Object.entries(brut.entrees ?? {})) {
         this.entrees.set(cle, {
           pseudo: String(val.pseudo ?? '?').slice(0, PSEUDO_MAX),
@@ -77,10 +92,13 @@ export class ClassementService {
           maj: Number(val.maj) || 0,
         });
       }
-    } catch {
-      // Fichier illisible ou corrompu : on repart d'un classement vide plutôt
-      // que d'empêcher le serveur de démarrer.
+      this.pret = true;
+    } catch (err) {
+      // Fichier illisible, corrompu ou stockage injoignable : on repart d'un
+      // classement vide plutôt que d'empêcher le serveur de démarrer.
       this.entrees = new Map();
+      this.pret = true;
+      console.warn(`[classement] lecture impossible (${this.stockage.nom}) : ${err.message}`);
     }
   }
 
@@ -94,15 +112,33 @@ export class ClassementService {
     if (this._timer.unref) this._timer.unref();
   }
 
-  sauvegarder() {
+  /** Contenu du fichier de données, tel qu'il sera écrit. */
+  serialiser() {
+    const entrees = {};
+    for (const [cle, val] of this.entrees) entrees[cle] = val;
+    return JSON.stringify({ version: 1, maj: Date.now(), entrees });
+  }
+
+  /**
+   * Écrit le fichier. Jamais deux écritures en parallèle : si des données
+   * changent pendant un envoi réseau, une seconde écriture est enchaînée.
+   * En cas d'échec, on retente plus tard — les données restent en mémoire
+   * entre-temps, le service continue de fonctionner normalement.
+   */
+  async sauvegarder() {
+    if (this._ecritureEnCours) { this._aRejouer = true; return; }
+    this._ecritureEnCours = true;
     try {
-      mkdirSync(dirname(this.fichier), { recursive: true });
-      const entrees = {};
-      for (const [cle, val] of this.entrees) entrees[cle] = val;
-      writeFileSync(this.fichier, JSON.stringify({ version: 1, entrees }), 'utf8');
-    } catch {
-      // Disque indisponible (Render Free au redémarrage) : le classement reste
-      // en mémoire, on ne casse pas la partie en cours pour autant.
+      await this.stockage.ecrire(this.serialiser());
+    } catch (err) {
+      console.warn(`[classement] écriture impossible (${this.stockage.nom}) : ${err.message}`);
+      // Nouvelle tentative différée : une coupure réseau ne doit pas perdre
+      // définitivement les victoires accumulées depuis le démarrage.
+      const t = setTimeout(() => this.sauvegarder(), RETRY_MS);
+      if (t.unref) t.unref();
+    } finally {
+      this._ecritureEnCours = false;
+      if (this._aRejouer) { this._aRejouer = false; this.planifierSauvegarde(); }
     }
   }
 
@@ -143,6 +179,39 @@ export class ClassementService {
     }
     this.elaguer();
     this.planifierSauvegarde();
+  }
+
+  /**
+   * Restaure un classement depuis un fichier téléversé (même format que celui
+   * produit par serialiser()). Utile après un redéploiement sur un hébergement
+   * où le disque est effacé : on re-téléverse le dernier fichier téléchargé.
+   *
+   * FUSION plutôt qu'écrasement : pour chaque joueur, on garde le meilleur des
+   * deux totaux. Ainsi, restaurer une vieille sauvegarde n'efface pas les
+   * parties jouées depuis.
+   *
+   * @returns {number} nombre de joueurs après import, ou -1 si le fichier est invalide
+   */
+  importer(donnees) {
+    const brut = donnees?.entrees;
+    if (!brut || typeof brut !== 'object') return -1;
+    for (const [cle, val] of Object.entries(brut)) {
+      if (!val || typeof val !== 'object') continue;
+      const victoires = Number(val.victoires) || 0;
+      const parties = Number(val.parties) || 0;
+      const e = this.entree(cle);
+      // On ne régresse jamais : le total le plus élevé gagne.
+      if (victoires >= e.victoires) {
+        e.victoires = victoires;
+        e.parJeu = (val.parJeu && typeof val.parJeu === 'object') ? val.parJeu : e.parJeu;
+        if (val.pseudo) e.pseudo = String(val.pseudo).slice(0, PSEUDO_MAX);
+      }
+      e.parties = Math.max(e.parties, parties);
+      e.maj = Math.max(e.maj, Number(val.maj) || Date.now());
+    }
+    this.elaguer();
+    this.planifierSauvegarde();
+    return this.entrees.size;
   }
 
   /** Classement trié : victoires décroissantes, puis ratio, puis parties. */

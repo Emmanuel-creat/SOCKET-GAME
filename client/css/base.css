@@ -193,3 +193,7 @@ h1, h2, h3 {
 @media (max-width: 560px) {
   .clsmt__ratio { display: none; }
 }
+.clsmt__outils { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+.clsmt__btn { font-size: 0.76rem; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.18)); background: rgba(255, 255, 255, 0.06); color: inherit; cursor: pointer; text-decoration: none; }
+.clsmt__btn:hover { background: rgba(255, 255, 255, 0.12); }
+.clsmt__retour { font-size: 0.76rem; color: var(--text-dim, #aab); }

@@ -151,6 +151,8 @@ export class AdminService {
   }
 
   estAdmin(socketId) { return this.admins.has(socketId); }
+  /** Vérifie le code administrateur (utilisé aussi par les routes HTTP d'import). */
+  codeValide(code) { return String(code ?? '') === CODE; }
   quitter(socketId) { this.admins.delete(socketId); }
   /** Info brute collectée pour un client (IP, agent, transport, messages…) — pour réutilisation (ex. diagnostic). */
   client(socketId) { return this.clients.get(socketId) ?? null; }
