@@ -1,19 +1,24 @@
 {
   "id": "cache-cache",
   "nom": "Cache-Cache",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "joueurs": { "min": 2, "max": 8 },
   "architecture": "host-autoritaire",
   "communication": "game:message (relais générique du moteur : vues ciblées par joueur, correctifs légers de position/curseur/tir, diffusion pour le chat)",
   "regles": {
     "principe": "chaque joueur est Chasseur exactement une fois ; une manche = un Chasseur + (n-1) Cacheurs sur UNE carte partagée tirée au sort",
     "phases": {
-      "cache": "2 min, Cacheurs uniquement : déplacement + pipette/peinture pour se camoufler dans le décor, verrouillage de position. Le Chasseur est sur écran noir (aucune carte ni position transmise avant la fin de cette phase).",
-      "chasse": "le Chasseur reçoit la scène complète et dispose de 2×(n-1) tirs pour repérer les Cacheurs à l'œil ; fin anticipée si munitions épuisées ou tout le monde trouvé (filet de sécurité : 2 min max)"
+      "cache": "2 à 5 min au choix de l'hôte, Cacheurs uniquement : déplacement + pipette/peinture plate + page de dessin détaillée pour se camoufler, verrouillage de position. Le Chasseur est sur écran noir (aucune carte ni position transmise avant la fin de cette phase).",
+      "chasse": "30 secondes fixes, le Chasseur reçoit la scène complète et dispose de 2×(n-1) tirs pour repérer les Cacheurs à l'œil ; fin anticipée si munitions épuisées ou tout le monde trouvé"
     },
     "cartes": 10,
     "rayonDetection": 0.045,
     "points": { "cacheurSurvit": 2, "chasseurParTrouvaille": 1 }
   },
-  "notes": "Version 2.0.0 : remplace le mécanisme de recherche à l'aveugle (clic + indice de proximité, formes 1-10) par une chasse visuelle de camouflage sur une carte partagée. Les 10 cartes existantes sont réutilisées ; les 10 formes ne le sont plus (un seul personnage, personnalisable par la couleur uniquement)."
+  "dessin": {
+    "principe": "page dédiée (façon Dessin & Devine) : vue zoomée du décor autour du personnage + calque peignable masqué à sa silhouette (le pinceau ne peut jamais déborder du personnage)",
+    "outils": ["pinceau (couleur libre)", "pipette (échantillonne le décor zoomé)", "taille de pinceau", "effacer"],
+    "export": "texture PNG ~110x110 encodée en data URL, quelques Ko, transmise via le même correctif léger que la couleur/position"
+  },
+  "notes": "v2.0.0 : remplace le mécanisme de recherche à l'aveugle par une chasse visuelle de camouflage. v2.1.0 : temps de cache réglable (2-5 min), temps de chasse fixé à 30s, ajout de la page de dessin détaillé sur le personnage."
 }
