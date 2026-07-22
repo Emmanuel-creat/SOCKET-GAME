@@ -9,7 +9,7 @@
  * lancer de rayons, flashs, bruits. Les murs sont dessinés en très sombre —
  * le labyrinthe n'est pas un secret, les POSITIONS le sont.
  */
-import { TraqueEngine, SKINS, COLS, ROWS, TICK_MS, HIDE_CHOICES, ROUND_CHOICES, MAZE_SIZES, SIZE_CHOICES, stepCollision } from './engine.js';
+import { TraqueEngine, SKINS, SKIN_BY_ID, COLS, ROWS, TICK_MS, HIDE_CHOICES, ROUND_CHOICES, MAZE_SIZES, SIZE_CHOICES, MANCHE_CHOICES, stepCollision } from './engine.js';
 import { Predictor } from '../shared/predictor.js';
 import { Interpolator } from '../shared/interpolator.js';
 
@@ -69,6 +69,17 @@ const CSS = `
 .trq__skins button { border: 2px solid transparent; background: rgba(255,255,255,.06); border-radius: 12px; padding: 8px 10px; color: inherit; cursor: pointer; font-size: .78rem; display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .trq__skins button.on { border-color: #fff; }
 .trq__skins .em { font-size: 1.5rem; }
+.trq__power { max-width: 520px; margin: 0 auto; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12); border-radius: 12px; padding: 10px 14px; font-size: .84rem; }
+.trq__power-title { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.trq__power-title .em { font-size: 1.2rem; }
+.trq__power-meta { font-size: .74rem; color: var(--text-dim,#aab); }
+.trq__power-desc { margin-top: 4px; color: var(--text,#dfe3f0); }
+.trq__power-all { margin-top: 8px; }
+.trq__power-all summary { cursor: pointer; font-size: .78rem; color: var(--text-dim,#aab); }
+.trq__power-grid { display: grid; gap: 4px; margin-top: 6px; }
+.trq__power-item { font-size: .78rem; line-height: 1.4; }
+.trq__keys { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; font-size: .76rem; color: var(--text-dim,#aab); }
+.trq__keys kbd { display: inline-block; background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.2); border-radius: 5px; padding: 1px 6px; margin-right: 3px; font-family: inherit; font-size: .74rem; }
 .trq__side { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
 .trq__roster { display: flex; flex-direction: column; gap: 4px; font-size: .82rem; }
 .trq__roster div.out { opacity: .42; text-decoration: line-through; }
@@ -364,8 +375,11 @@ class TraqueUI {
   axis() {
     if (this.stick.active) return { dx: this.stick.dx, dy: this.stick.dy };
     const k = this.keys;
-    const dx = (k.has('ArrowRight') || k.has('KeyD') ? 1 : 0) - (k.has('ArrowLeft') || k.has('KeyA') || k.has('KeyQ') ? 1 : 0);
-    const dy = (k.has('ArrowDown') || k.has('KeyS') ? 1 : 0) - (k.has('ArrowUp') || k.has('KeyW') || k.has('KeyZ') ? 1 : 0);
+    // Déplacement : ZQSD (AZERTY) ou flèches. La touche A est RÉSERVÉE au
+    // pouvoir de skin — elle n'est donc plus un alias de « gauche » (ce que
+    // faisait le mapping QWERTY WASD, source de conflit avec le pouvoir).
+    const dx = (k.has('ArrowRight') || k.has('KeyD') ? 1 : 0) - (k.has('ArrowLeft') || k.has('KeyQ') ? 1 : 0);
+    const dy = (k.has('ArrowDown') || k.has('KeyS') ? 1 : 0) - (k.has('ArrowUp') || k.has('KeyZ') ? 1 : 0);
     return { dx, dy };
   }
 
@@ -439,6 +453,38 @@ class TraqueUI {
       },
     }, [h('span', { className: 'em' }, s.emoji), h('span', { style: `color:${s.couleur}` }, s.nom)]))));
 
+    // Description du pouvoir du skin choisi + rappel de tous les pouvoirs.
+    const skinSel = SKIN_BY_ID[current];
+    if (skinSel?.pouvoir) {
+      const pw = skinSel.pouvoir;
+      const dureeTxt = pw.dureeMs ? `${Math.round(pw.dureeMs / 1000)} s` : 'instantané';
+      body.push(h('div', { className: 'trq__power' }, [
+        h('div', { className: 'trq__power-title' }, [
+          h('span', { className: 'em' }, skinSel.emoji),
+          h('b', { style: `color:${skinSel.couleur}` }, ` ${pw.nom} `),
+          h('span', { className: 'trq__power-meta' }, `⏱️ ${dureeTxt} · recharge ${Math.round(pw.chargeMs / 1000)} s · touche A`),
+        ]),
+        h('div', { className: 'trq__power-desc' }, pw.desc),
+        h('details', { className: 'trq__power-all' }, [
+          h('summary', {}, 'Voir tous les pouvoirs'),
+          h('div', { className: 'trq__power-grid' }, SKINS.map((sk) => h('div', { className: 'trq__power-item' }, [
+            h('span', {}, `${sk.emoji} `),
+            h('b', { style: `color:${sk.couleur}` }, sk.pouvoir.nom),
+            h('span', { className: 'trq__power-meta' }, ` — ${sk.pouvoir.desc}`),
+          ]))),
+        ]),
+      ]));
+    }
+
+    // Rappel des commandes clavier (AZERTY par défaut).
+    body.push(h('div', { className: 'trq__keys' }, [
+      h('span', {}, [h('kbd', {}, 'Z'), h('kbd', {}, 'Q'), h('kbd', {}, 'S'), h('kbd', {}, 'D'), ' se déplacer']),
+      h('span', {}, [h('kbd', {}, '←↑↓→'), ' au choix']),
+      h('span', {}, [h('kbd', {}, 'A'), ' pouvoir']),
+      h('span', {}, [h('kbd', {}, 'Espace'), ' tirer']),
+      h('span', {}, [h('kbd', {}, 'Maj'), ' marcher furtivement']),
+    ]));
+
     if (this.isHost && v) {
       const box = h('div', { className: 'trq__setup' });
       const sel = (label, key, choices, fmt) => {
@@ -471,6 +517,7 @@ class TraqueUI {
       box.append(
         h('div', { className: 'trq__row' }, [h('b', {}, 'Déroulement'), modeSel]),
         h('div', { className: 'trq__row' }, [h('b', {}, 'Taille du labyrinthe'), tailleSel]),
+        sel('Nombre de manches', 'nbManches', MANCHE_CHOICES, (c) => (c === 0 ? 'Auto (selon le mode)' : `${c} manche${c > 1 ? 's' : ''}`)),
         sel('Temps de cachette', 'hideMs', HIDE_CHOICES, (c) => `${c / 1000} s`),
         sel('Durée de la traque', 'roundMs', ROUND_CHOICES, (c) => `${c / 60000} min`),
         sel('Balles par joueur', 'ballesParJoueur', [1, 2, 3], (c) => `×${c} (soit ${c * v.roster.length} balles)`),

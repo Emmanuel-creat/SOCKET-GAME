@@ -143,12 +143,16 @@ export const SKIN_BY_ID = Object.freeze(Object.fromEntries(SKINS.map((s) => [s.i
 export const DEFAULT_OPTIONS = Object.freeze({
   mode: 'rotation',        // 'rotation' (chacun chercheur une fois) | 'unique' (une manche)
   taille: SIZE_DEFAULT,    // 'petit' | 'moyen' | 'grand' | 'geant'
+  nbManches: 0,            // 0 = automatique (rotation → un tour par joueur ; unique → 1)
   hideMs: HIDE_MS_DEFAULT,
   roundMs: ROUND_MS_DEFAULT,
   ballesParJoueur: BULLETS_PER_PLAYER,
   detecteurs: true,
   bonus: true,
 });
+
+// Choix proposés au Host pour le nombre de manches (0 = auto selon le mode).
+export const MANCHE_CHOICES = Object.freeze([0, 1, 2, 3, 5, 8, 10]);
 
 export const SIZE_CHOICES = Object.freeze(Object.keys(MAZE_SIZES)); // petit→géant
 
@@ -350,6 +354,7 @@ export class TraqueEngine {
     const o = { ...this.options, ...options };
     o.mode = o.mode === 'unique' ? 'unique' : 'rotation';
     o.taille = MAZE_SIZES[o.taille] ? o.taille : DEFAULT_OPTIONS.taille;
+    o.nbManches = MANCHE_CHOICES.includes(Number(o.nbManches)) ? Number(o.nbManches) : DEFAULT_OPTIONS.nbManches;
     o.hideMs = HIDE_CHOICES.includes(Number(o.hideMs)) ? Number(o.hideMs) : DEFAULT_OPTIONS.hideMs;
     o.roundMs = ROUND_CHOICES.includes(Number(o.roundMs)) ? Number(o.roundMs) : DEFAULT_OPTIONS.roundMs;
     o.ballesParJoueur = clamp(Math.round(Number(o.ballesParJoueur) || BULLETS_PER_PLAYER), 1, 5);
@@ -372,7 +377,10 @@ export class TraqueEngine {
     if (pid !== this.hostId) return { ok: false, error: 'Seul le Host lance la partie.' };
     if (this.phase !== 'setup') return { ok: false, error: 'La partie a commencé.' };
     this.seekerOrder = this.shuffleIds();
-    this.totalRounds = this.options.mode === 'rotation' ? this.n : 1;
+    // Nombre de manches : choix explicite du Host s'il l'a fixé (nbManches > 0),
+    // sinon automatique — un tour complet de Chercheurs en rotation, 1 en unique.
+    const auto = this.options.mode === 'rotation' ? this.n : 1;
+    this.totalRounds = this.options.nbManches > 0 ? this.options.nbManches : auto;
     this.startRound();
     return { ok: true };
   }

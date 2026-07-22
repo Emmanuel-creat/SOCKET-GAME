@@ -44,6 +44,16 @@ export const BONUS_LABELS = {
   double: 'Double tir', laser: 'Laser', ricochet: 'Ricochet', shield: 'Bouclier',
   teleport: 'Téléporteur', freeze: 'Gel', explosion: 'Explosion', pierce: 'Perforant',
 };
+export const BONUS_DESCRIPTIONS = {
+  double: 'Tire deux balles en éventail — deux chances de toucher.',
+  laser: 'Rayon qui ignore les boucliers adverses.',
+  ricochet: 'La balle rebondit sur le bord de l\'arène.',
+  shield: 'Bloque le prochain tir reçu (à usage unique).',
+  teleport: 'Échange votre position avec celle d\'un adversaire au tir.',
+  freeze: 'Sur un bouclier bloqué, gèle la cible : elle rate son prochain tir.',
+  explosion: 'À l\'impact, souffle qui élimine aussi les joueurs tout proches.',
+  pierce: 'Traverse une cible pour continuer vers celles derrière.',
+};
 
 function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
 
@@ -131,6 +141,9 @@ export class LastShotEngine {
     }
     this.rng = options.rng || Math.random;
     this.simultaneous = !!options.simultaneous;
+    // Best-of : nombre de manches gagnantes pour remporter le MATCH (1 = une
+    // seule manche, comportement d'origine). Le premier à l'atteindre gagne.
+    this.winsTarget = Math.max(1, Number(options.winsTarget) || 1);
 
     this.players = players.map((p, i) => {
       const a = (i / players.length) * Math.PI * 2;
@@ -150,6 +163,7 @@ export class LastShotEngine {
         shielded: false,
         skipNextShot: false,
         kills: 0,
+        wins: 0,          // manches de best-of gagnées
         rank: null,
       };
     });
@@ -164,7 +178,9 @@ export class LastShotEngine {
     this.pickups = [];
     this.shotLog = [];
     this.roundSummary = null;
-    this.matchWinner = null;
+    this.matchWinner = null;      // gagnant de la MANCHE en cours (dernier survivant)
+    this.bestOfWinner = null;     // gagnant du MATCH complet (a atteint winsTarget)
+    this.matchGame = 0;           // numéro de la manche de best-of
     this.dirty = true;
   }
 
@@ -176,8 +192,36 @@ export class LastShotEngine {
 
   /** Démarre la partie (appelé une fois par le Host après choix du mode). */
   startMatch(now) {
+    this.matchGame = 0;
+    this.startBestOfGame(now);
+  }
+
+  /**
+   * Démarre une nouvelle MANCHE de best-of : tout le monde ressuscite, l'arène
+   * repart à sa taille pleine, on garde les scores de wins accumulés.
+   */
+  startBestOfGame(now) {
+    this.matchGame += 1;
     this.round = 0;
     this.arenaRadius = ARENA_BASE_RADIUS;
+    this.prevArenaRadius = ARENA_BASE_RADIUS;
+    for (let i = 0; i < this.players.length; i += 1) {
+      const p = this.players[i];
+      const a = (i / this.players.length) * Math.PI * 2;
+      p.alive = true;
+      p.rank = null;
+      p.kills = 0;
+      p.shielded = false;
+      p.skipNextShot = false;
+      p.bonus = null;
+      p.jumping = false;
+      p.locked = false;
+      p.x = Math.cos(a) * ARENA_BASE_RADIUS * 0.6;
+      p.y = Math.sin(a) * ARENA_BASE_RADIUS * 0.6;
+      p.angle = a + Math.PI;
+      p.input = { dx: 0, dy: 0 };
+    }
+    this.matchWinner = null;
     this.startRound(now);
   }
 
@@ -265,6 +309,8 @@ export class LastShotEngine {
       if (now >= this.resolutionEndsAt) this.finishResolution(now);
     } else if (this.phase === 'fin-manche') {
       if (now >= this.roundEndPauseEndsAt) this.startRound(now);
+    } else if (this.phase === 'fin-partie') {
+      if (now >= this.roundEndPauseEndsAt) this.startBestOfGame(now);
     }
     // 'fin' et 'attente' : rien à faire, le module hôte gère la suite (ctx.onEnd).
   }
@@ -420,11 +466,27 @@ export class LastShotEngine {
     };
 
     if (alive.length <= 1) {
-      if (alive.length === 1) { alive[0].rank = 1; this.matchWinner = { id: alive[0].id, pseudo: alive[0].pseudo }; } else {
-        this.matchWinner = null; // égalité totale (mode simultané) : aucun survivant
+      // Fin d'une MANCHE de best-of : le dernier survivant (s'il y en a un) marque
+      // une victoire. Si personne n'a encore atteint la cible, on enchaîne une
+      // nouvelle manche (arène pleine, tout le monde ressuscité).
+      if (alive.length === 1) {
+        alive[0].rank = 1;
+        alive[0].wins += 1;
+        this.matchWinner = { id: alive[0].id, pseudo: alive[0].pseudo };
+        if (alive[0].wins >= this.winsTarget) {
+          this.bestOfWinner = { id: alive[0].id, pseudo: alive[0].pseudo, wins: alive[0].wins };
+        }
+      } else {
+        this.matchWinner = null; // égalité totale (mode simultané) : aucun survivant, pas de point
       }
-      this.phase = 'fin';
-      this.roundEndPauseEndsAt = now + MATCH_END_PAUSE_MS;
+      if (this.bestOfWinner) {
+        this.phase = 'fin';
+        this.roundEndPauseEndsAt = now + MATCH_END_PAUSE_MS;
+      } else {
+        // Manche suivante du best-of après une courte pause de célébration.
+        this.phase = 'fin-partie';
+        this.roundEndPauseEndsAt = now + MATCH_END_PAUSE_MS;
+      }
     } else {
       this.phase = 'fin-manche';
       this.roundEndPauseEndsAt = now + ROUND_END_PAUSE_MS;
@@ -439,13 +501,16 @@ export class LastShotEngine {
       phase: this.phase,
       round: this.round,
       simultaneous: this.simultaneous,
+      winsTarget: this.winsTarget,
+      matchGame: this.matchGame,
+      bestOfWinner: this.bestOfWinner,
       arenaRadius: this.arenaRadius,
       prevArenaRadius: this.prevArenaRadius,
       prepMsLeft: this.phase === 'preparation' ? Math.max(0, this.prepEndsAt - now) : 0,
       players: this.players.map((p) => ({
         id: p.id, pseudo: p.pseudo, slot: p.slot, alive: p.alive,
         x: p.x, y: p.y, angle: p.angle, locked: p.locked, jumping: p.jumping,
-        bonus: p.bonus, shielded: p.shielded, kills: p.kills, rank: p.rank,
+        bonus: p.bonus, shielded: p.shielded, kills: p.kills, wins: p.wins, rank: p.rank,
       })),
       pickups: this.pickups,
       shotLog: this.shotLog,
@@ -454,11 +519,36 @@ export class LastShotEngine {
     };
   }
 
+  /**
+   * Vue PERSONNELLE d'un joueur. Anti-triche : pendant la phase de préparation,
+   * un joueur ne voit PAS où sont ses adversaires (ils placent leur position en
+   * secret) ; les positions ne sont révélées qu'à la phase de résolution — le
+   * « reveal » du tir. Sa propre position, elle, est toujours visible.
+   * Les positions masquées sont ABSENTES de la vue (pas juste cachées à
+   * l'affichage) : le client ne peut pas les retrouver.
+   */
+  getViewFor(playerId, now) {
+    const base = this.getState(now);
+    // On ne masque QUE pendant la préparation (le placement secret).
+    if (this.phase !== 'preparation') return base;
+    base.players = base.players.map((p) => {
+      if (p.id === playerId || !p.alive) return p;         // soi-même et les éliminés : visibles
+      // Adversaire vivant en préparation : on retire toute trace de position.
+      const { x, y, angle, jumping, locked, ...reste } = p;
+      return { ...reste, hidden: true, locked };            // on garde « verrouillé ? » (info non spatiale)
+    });
+    return base;
+  }
+
   summary() {
-    const ranked = [...this.players].sort((a, b) => (a.rank ?? 999) - (b.rank ?? 999));
+    // Classement du MATCH : par manches gagnées (best-of), puis par éliminations.
+    const ranked = [...this.players].sort((a, b) => (b.wins - a.wins) || (b.kills - a.kills));
     const scores = {};
-    for (const p of ranked) scores[p.pseudo] = p.kills;
-    const label = this.matchWinner ? `🏆 ${this.matchWinner.pseudo} remporte Last Shot !` : '💥 Aucun survivant — la plateforme est vide.';
-    return { summary: label, scores, winnerId: this.matchWinner?.id ?? null };
+    for (const p of ranked) scores[p.pseudo] = p.wins;
+    const gagnant = this.bestOfWinner || (ranked[0]?.wins > 0 ? ranked[0] : null);
+    const label = gagnant
+      ? `🏆 ${gagnant.pseudo} remporte Last Shot ! (${gagnant.wins}/${this.winsTarget})`
+      : '💥 Aucun vainqueur — la plateforme est vide.';
+    return { summary: label, scores, winnerId: gagnant?.id ?? null };
   }
 }

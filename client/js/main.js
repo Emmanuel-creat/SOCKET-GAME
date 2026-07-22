@@ -14,6 +14,7 @@ import { initPageRefus } from './ui/pageRefus.js';
 import { PlayView } from './views/PlayView.js';
 import { RoomsView } from './views/RoomsView.js';
 import { PlayersView } from './views/PlayersView.js';
+import { ClassementView } from './views/ClassementView.js';
 import { RoomView } from './views/RoomView.js';
 import { GameView } from './views/GameView.js';
 import { LABELS } from '/shared/constants.js';
@@ -33,6 +34,7 @@ new Router('play');
 new PlayView({ socket });
 new RoomsView({ socket });
 new PlayersView();
+new ClassementView({ socket });
 new RoomView({ socket });
 new GameView({ socket });
 

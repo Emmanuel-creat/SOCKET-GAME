@@ -173,3 +173,23 @@ h1, h2, h3 {
   cursor: pointer;
   transition: opacity var(--t-fast) var(--ease);
 }
+
+/* ==========================================================================
+   Classement général (onglet 🏆) — palmarès tous jeux confondus.
+   ========================================================================== */
+.clsmt { display: flex; flex-direction: column; gap: 2px; }
+.clsmt__row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; }
+.clsmt__row:nth-child(odd) { background: rgba(255, 255, 255, 0.03); }
+.clsmt__row--me { background: rgba(108, 92, 231, 0.18); outline: 1px solid rgba(108, 92, 231, 0.45); }
+.clsmt__rank { min-width: 32px; font-size: 1rem; text-align: center; opacity: 0.9; }
+.clsmt__who { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.clsmt__games { font-size: 0.72rem; color: var(--text-dim, #aab); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clsmt__wins { font-weight: 700; white-space: nowrap; }
+.clsmt__ratio { font-size: 0.74rem; color: var(--text-dim, #aab); white-space: nowrap; min-width: 92px; text-align: right; }
+.clsmt__me { margin-bottom: 12px; }
+.clsmt__me-title { font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim, #aab); margin-bottom: 4px; }
+.clsmt__note { font-size: 0.74rem; color: var(--text-dim, #aab); margin-top: 10px; }
+
+@media (max-width: 560px) {
+  .clsmt__ratio { display: none; }
+}

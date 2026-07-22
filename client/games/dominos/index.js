@@ -521,6 +521,13 @@ display:flex;gap:12px;align-items:stretch;font-family:inherit;color:var(--dmn-in
 .dmn__stage{flex:1;display:flex;flex-direction:column;min-height:0}
 .dmn__board{flex:1;overflow:auto;display:flex;align-items:center;padding:20px;position:relative}
 .dmn__chain{display:flex;align-items:center;gap:2px;margin:auto;flex-wrap:wrap;justify-content:center;max-width:100%}
+.dmn__chain--serpentin{flex-direction:column;gap:4px;align-items:center;width:100%}
+.dmn__row{display:flex;align-items:center;gap:2px;justify-content:center;max-width:100%}
+.dmn__row--rev{flex-direction:row-reverse}
+/* Dans une rangée qui se lit de droite à gauche, on retourne aussi les moitiés
+   de chaque domino pour que les valeurs se raccordent visuellement. */
+.dmn__row--rev .dmn-tile--h{flex-direction:row-reverse}
+.dmn__row--rev .dmn-tile--h .dmn-tile__half:first-child{border-right:none;border-left:2px solid rgba(0,0,0,.25)}
 .dmn__endzone{width:38px;height:60px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;font-size:18px;opacity:0;pointer-events:none;transition:opacity .12s,background .12s;border:2px dashed transparent}
 .dmn__endzone--active{opacity:1;pointer-events:auto;cursor:pointer;border-color:var(--dmn-accent);background:rgba(108,92,231,.15);animation:dmnpulse 1s ease-in-out infinite}
 @keyframes dmnpulse{0%,100%{background:rgba(108,92,231,.10)}50%{background:rgba(108,92,231,.28)}}
@@ -862,6 +869,43 @@ export class DominoUI {
     this.renderGame();
   }
 
+  /**
+   * Dispose les dominos en serpentin : on remplit une rangée vers la droite,
+   * puis la suivante vers la gauche, etc. Le nombre de dominos par rangée est
+   * calculé d'après la largeur réellement disponible, donc la chaîne reste
+   * toujours dans le cadre au lieu de filer en longueur.
+   */
+  chainSerpentin(nodes, tiles, leftZone, rightZone) {
+    const largeurDispo = Math.max(200, (this.boardEl?.clientWidth || 0) - 90); // marge pour les zones
+    // Un domino couché ≈ 62 px de large, un double debout ≈ 32 px.
+    const largeurDe = (t) => (t && t.a === t.b ? 32 : 62);
+    const rangees = [];
+    let courante = [];
+    let largeur = 0;
+    for (let i = 0; i < nodes.length; i += 1) {
+      const w = largeurDe(tiles[i]);
+      if (courante.length && largeur + w > largeurDispo) {
+        rangees.push(courante); courante = []; largeur = 0;
+      }
+      courante.push(nodes[i]);
+      largeur += w;
+    }
+    if (courante.length) rangees.push(courante);
+    if (!rangees.length) rangees.push([]);
+
+    const lignes = rangees.map((cellules, r) => {
+      const versLaGauche = r % 2 === 1;             // une rangée sur deux repart en sens inverse
+      const contenu = [...cellules];
+      // Zone gauche au tout début, zone droite à la toute fin de la chaîne.
+      if (r === 0) contenu.unshift(leftZone);
+      if (r === rangees.length - 1) contenu.push(rightZone);
+      return h('div', {
+        className: `dmn__row${versLaGauche ? ' dmn__row--rev' : ''}`,
+      }, contenu);
+    });
+    return h('div', { className: 'dmn__chain dmn__chain--serpentin' }, lignes);
+  }
+
   onEndZoneClick(end) {
     if (this.selectedTileId == null) return;
     this.requestPlay(this.selectedTileId, end);
@@ -1116,7 +1160,11 @@ export class DominoUI {
       onClick: () => this.onEndZoneClick('right'),
     }, v.chain.length ? '▶' : '');
 
-    this.boardEl.replaceChildren(h('div', { className: 'dmn__chain' }, [leftZone, ...chainNodes, rightZone]));
+    // Rendu SERPENTIN : au lieu d'une seule ligne qui s'étire (et déborde), la
+    // chaîne se replie en rangées alternées — de gauche à droite, puis de droite
+    // à gauche — comme sur une vraie table. Les extrémités de jeu restent les
+    // mêmes (gauche/droite) : c'est un repli d'affichage, pas une règle.
+    this.boardEl.replaceChildren(this.chainSerpentin(chainNodes, chainNodes.map((_, i) => v.chain[i]), leftZone, rightZone));
 
     // Main du joueur.
     const playableIds = new Set((v.validMoves || []).map((m) => m.tileId));

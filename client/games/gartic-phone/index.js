@@ -32,6 +32,9 @@ export const PHASE_MS = 180000;          // 3 min par phase
 const GRACE_MS = 2500;                    // marge Host après le minuteur
 const HOST_WATCH_MS = 500;
 const CHAT_MAX = 200;
+let _chatSeq = 0;
+/** Identifiant unique de message de chat (déduplication à l'affichage). */
+function chatId() { _chatSeq += 1; return `${Date.now().toString(36)}-${_chatSeq}`; }
 const CANVAS_W = 640;
 const CANVAS_H = 448;
 const EXPORT_W = 480;                     // résolution d'export (payload allégé)
@@ -65,13 +68,23 @@ function h(tag, props = {}, children = []) {
 /* ====================================================================== */
 
 export class GarticEngine {
-  /** @param {{id:string,pseudo:string}[]} players 3 à 16 joueurs. */
-  constructor(players) {
+  /**
+   * @param {{id:string,pseudo:string}[]} players 3 à 16 joueurs.
+   * @param {{nbManches?:number}} options nbManches : nombre de parties à jouer
+   *   avant le classement final (1 par défaut).
+   */
+  constructor(players, options = {}) {
     if (players.length < 3 || players.length > 16) {
       throw new Error('Gartic Phone se joue de 3 à 16 joueurs.');
     }
     this.players = players.map((p) => ({ id: p.id, pseudo: p.pseudo }));
     this.chat = [];
+    this.nbManches = Math.max(1, Math.min(10, Number(options.nbManches) || 1));
+    // Votes de correspondance consigne ↔ dessin.
+    // votes[cle] = { [voterId]: note 0-10 } ; cle = `${game}:${chainIndex}`.
+    this.votes = {};
+    this.voteAuteurs = {};   // cle de vote -> id du dessinateur (survit aux manches)
+    this.game = 0;
     this.reset();
   }
 
@@ -86,6 +99,9 @@ export class GarticEngine {
     e.albumChain = s.albumChain;
     e.albumStep = s.albumStep;
     e.game = s.game;
+    e.nbManches = s.nbManches || 1;
+    e.votes = s.votes || {};
+    e.voteAuteurs = s.voteAuteurs || {};
     return e;
   }
 
@@ -100,6 +116,9 @@ export class GarticEngine {
       albumChain: this.albumChain,
       albumStep: this.albumStep,
       game: this.game,
+      nbManches: this.nbManches,
+      votes: this.votes,
+      voteAuteurs: this.voteAuteurs,
     };
   }
 
@@ -190,7 +209,83 @@ export class GarticEngine {
     if (this.phase !== 'album') return;
     if (this.albumStep < 2) { this.albumStep += 1; return; }
     if (this.albumChain < this.N - 1) { this.albumChain += 1; this.albumStep = 0; return; }
+    // Album terminé : s'il reste des manches à jouer, on relance une partie ;
+    // sinon on passe au classement final.
+    if (this.game < this.nbManches) { this.reset(); return; }
     this.phase = 'done';
+  }
+
+  /* -------------------- votes (consigne ↔ dessin) -------------------- */
+
+  /** Clé de stockage d'un vote : une chaîne par manche. */
+  voteKey(chain) { return `${this.game}:${chain}`; }
+
+  /** Qui a dessiné la chaîne c (étape 1) — il ne vote pas pour lui-même. */
+  dessinateurDe(chain) { return this.chains[chain]?.steps?.[1]?.by ?? null; }
+
+  /**
+   * Enregistre la note (0-10) d'un joueur sur la correspondance entre la
+   * consigne et le dessin d'une chaîne. Un joueur ne note ni son propre dessin
+   * ni deux fois la même chaîne (le second vote remplace le premier).
+   * Les votes ne sont acceptés qu'une fois le dessin révélé (albumStep >= 1).
+   */
+  castVote(chain, voterId, note) {
+    if (this.phase !== 'album') return { ok: false, error: 'Les votes ont lieu pendant l\u2019album.' };
+    if (chain !== this.albumChain || this.albumStep < 1) {
+      return { ok: false, error: 'Ce dessin n\u2019est pas encore révélé.' };
+    }
+    const n = Math.round(Number(note));
+    if (!Number.isFinite(n) || n < 0 || n > 10) return { ok: false, error: 'Note entre 0 et 10.' };
+    if (this.dessinateurDe(chain) === voterId) return { ok: false, error: 'On ne note pas son propre dessin.' };
+    const k = this.voteKey(chain);
+    if (!this.votes[k]) this.votes[k] = {};
+    this.votes[k][voterId] = n;
+    // On retient l'auteur du dessin : les chaînes sont remises à zéro à chaque
+    // manche, mais le classement final doit rester calculable.
+    if (!this.voteAuteurs) this.voteAuteurs = {};
+    this.voteAuteurs[k] = this.dessinateurDe(chain);
+    return { ok: true };
+  }
+
+  /** Moyenne et nombre de votes d'une chaîne de la manche courante. */
+  statsVote(chain) {
+    const v = this.votes[this.voteKey(chain)] || {};
+    const notes = Object.values(v);
+    if (!notes.length) return { moyenne: null, nb: 0 };
+    return { moyenne: Math.round((notes.reduce((a, b) => a + b, 0) / notes.length) * 10) / 10, nb: notes.length };
+  }
+
+  /**
+   * Classement final : moyenne des notes reçues par chaque DESSINATEUR, toutes
+   * manches confondues. Un joueur qui n'a jamais été noté n'a pas de moyenne.
+   */
+  classement() {
+    const cumul = {};   // id -> { total, nb }
+    for (const [cle, parVotant] of Object.entries(this.votes)) {
+      const [, chainStr] = cle.split(':');
+      const chain = Number(chainStr);
+      // Le dessinateur est celui de la manche correspondante ; on ne conserve
+      // que la manche courante en mémoire de chaînes, donc on stocke l'auteur
+      // au moment du vote (voir noteAuteurs).
+      const auteur = this.voteAuteurs?.[cle] ?? this.dessinateurDe(chain);
+      if (!auteur) continue;
+      const notes = Object.values(parVotant);
+      if (!notes.length) continue;
+      if (!cumul[auteur]) cumul[auteur] = { total: 0, nb: 0 };
+      cumul[auteur].total += notes.reduce((a, b) => a + b, 0);
+      cumul[auteur].nb += notes.length;
+    }
+    return this.players
+      .map((p) => {
+        const c = cumul[p.id];
+        return {
+          id: p.id,
+          pseudo: p.pseudo,
+          moyenne: c ? Math.round((c.total / c.nb) * 10) / 10 : null,
+          nbVotes: c ? c.nb : 0,
+        };
+      })
+      .sort((a, b) => (b.moyenne ?? -1) - (a.moyenne ?? -1));
   }
 
   albumPrev() {
@@ -204,7 +299,7 @@ export class GarticEngine {
   addChat(from, text) {
     const clean = String(text || '').slice(0, 240).trim();
     if (!clean) return;
-    this.chat.push({ from, pseudo: this.pseudoOf(from), text: clean, ts: Date.now() });
+    this.chat.push({ id: chatId(), from, pseudo: this.pseudoOf(from), text: clean, ts: Date.now() });
     if (this.chat.length > CHAT_MAX) this.chat.shift();
   }
 
@@ -245,7 +340,24 @@ export class GarticEngine {
       v.phaseIndex = this.phaseIndex();
     } else if (this.phase === 'album') {
       v.album = this.albumView();
+      // Vote : possible seulement une fois le dessin révélé, et pas sur le sien.
+      const chain = this.albumChain;
+      const dessinateur = this.dessinateurDe(chain);
+      const stats = this.statsVote(chain);
+      v.vote = {
+        chain,
+        ouvert: this.albumStep >= 1,
+        peutVoter: this.albumStep >= 1 && dessinateur !== pid,
+        maNote: (this.votes[this.voteKey(chain)] || {})[pid] ?? null,
+        moyenne: stats.moyenne,
+        nb: stats.nb,
+        dessinateur: dessinateur ? this.pseudoOf(dessinateur) : null,
+        estMonDessin: dessinateur === pid,
+      };
+    } else if (this.phase === 'done') {
+      v.classement = this.classement();
     }
+    v.nbManches = this.nbManches;
     return v;
   }
 }
@@ -374,10 +486,14 @@ class DrawCanvas {
 
 const CSS = `
 .gp{--gp-accent:var(--accent,#6c5ce7);--gp-surface:var(--surface,#171a24);--gp-border:var(--border,#2a2f3d);--gp-ink:var(--text,#e8eaf0);--gp-deep:#0e1017;
-display:flex;gap:12px;font-family:inherit;color:var(--gp-ink);min-height:560px}
+/* Hauteur BORNÉE : sans plafond, l'accumulation des messages étirait la zone de
+   chat à l'infini au lieu de la faire défiler. On cadre le composant sur la
+   hauteur disponible (avec repli), et les enfants scrollables prennent le relais. */
+display:flex;gap:12px;font-family:inherit;color:var(--gp-ink);
+height:100%;min-height:520px;max-height:100%}
 .gp *{box-sizing:border-box}
-.gp__main{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--gp-surface);border:1px solid var(--gp-border);border-radius:14px;overflow:hidden;position:relative}
-.gp__side{width:240px;flex:none;display:flex;flex-direction:column;background:var(--gp-surface);border:1px solid var(--gp-border);border-radius:14px;overflow:hidden}
+.gp__main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--gp-surface);border:1px solid var(--gp-border);border-radius:14px;overflow:hidden;position:relative}
+.gp__side{width:240px;flex:none;min-height:0;display:flex;flex-direction:column;background:var(--gp-surface);border:1px solid var(--gp-border);border-radius:14px;overflow:hidden}
 .gp__head{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--gp-border);flex:none}
 .gp__phase{font-weight:800;font-size:14px;letter-spacing:.3px}
 .gp__grow{flex:1}
@@ -407,6 +523,21 @@ display:flex;gap:12px;font-family:inherit;color:var(--gp-ink);min-height:560px}
 .gp-spin{width:32px;height:32px;border:3px solid var(--gp-border);border-top-color:#33c26b;border-radius:50%;animation:gpspin .9s linear infinite}
 @keyframes gpspin{to{transform:rotate(360deg)}}
 .gp-album{width:100%;max-width:640px;display:flex;flex-direction:column;gap:10px;align-items:center}
+.gp-vote{width:100%;max-width:520px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:10px 12px;text-align:center}
+.gp-vote__title{font-size:.84rem;font-weight:700;margin-bottom:6px}
+.gp-vote__row{display:flex;gap:4px;flex-wrap:wrap;justify-content:center}
+.gp-vote__btn{width:34px;height:34px;border-radius:8px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:inherit;cursor:pointer;font-size:.84rem;font-weight:600}
+.gp-vote__btn:hover{background:rgba(255,255,255,.14)}
+.gp-vote__btn.on{border-color:var(--gp-accent);background:rgba(108,92,231,.35)}
+.gp-vote__avg{margin-top:6px;font-size:.76rem;color:var(--text-dim,#aab)}
+.gp-rank{width:100%;max-width:420px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:12px 14px}
+.gp-rank__title{font-size:.86rem;font-weight:700;margin-bottom:8px;text-align:center}
+.gp-rank__row{display:flex;gap:6px;align-items:baseline;font-size:.82rem;padding:3px 0}
+.gp-rank__row.top{color:#ffd76b}
+.gp-rank__pos{opacity:.6;min-width:20px}
+.gp-rank__score{margin-left:auto;color:var(--text-dim,#aab);font-size:.78rem}
+.gp-manches{margin-top:10px;font-size:.78rem;color:var(--text-dim,#aab);display:flex;gap:6px;align-items:center;justify-content:center}
+.gp-manches__sel{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);color:inherit;border-radius:8px;padding:3px 8px;font-size:.78rem}
 .gp-album__origin{font-size:13px;opacity:.7}
 .gp-card{width:100%;padding:12px 16px;border-radius:12px;background:var(--gp-deep);border:1px solid var(--gp-border);animation:gpfade .35s ease}
 @keyframes gpfade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
@@ -419,7 +550,7 @@ display:flex;gap:12px;font-family:inherit;color:var(--gp-ink);min-height:560px}
 .gp-btn:disabled{opacity:.4;cursor:not-allowed}
 .gp-btn--ghost{background:transparent;border:1px solid var(--gp-border);color:inherit;font-weight:600}
 .gp-chat__head{padding:10px 14px;border-bottom:1px solid var(--gp-border);font-weight:700;font-size:14px;flex:none}
-.gp-chat__log{flex:1;overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.gp-chat__log{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:10px 12px;display:flex;flex-direction:column;gap:6px}
 .gp-msg{font-size:13px;line-height:1.35;word-break:break-word}
 .gp-msg b{color:var(--gp-accent)}
 .gp-chat__form{display:flex;gap:6px;padding:10px;border-top:1px solid var(--gp-border);flex:none}
@@ -478,7 +609,9 @@ export class GarticUI {
     this.unsub = this.ctx.onMessage(({ from, data }) => this.onMsg(from, data));
 
     if (this.isHost) {
-      try { this.engine = new GarticEngine(this.players); }
+      let manchesPref = 1;
+      try { manchesPref = Number(localStorage.getItem('gp:manches')) || 1; } catch { /* stockage indisponible */ }
+      try { this.engine = new GarticEngine(this.players, { nbManches: manchesPref }); }
       catch (e) { this.stage.replaceChildren(h('div', { className: 'gp-wait' }, `⚠️ ${e.message}`)); return; }
       this.hostStartPhaseTimer();
       this.broadcast2();
@@ -506,6 +639,12 @@ export class GarticUI {
         this.ctx.sendMessage({ k: 'c', chat: this.engine.chat }, from); return; }
       if (data.k === 's') { this.hostSubmit(from, data.phase, data.content); return; }
       if (data.k === 'chat') { this.engine.addChat(from, data.text); this.pushChatFrom(from, data.text); return; }
+      if (data.k === 'vote') {
+        // Le Host est l'autorité : il valide la note (bornes, auteur, phase).
+        const r = this.engine.castVote(data.chain, from, data.note);
+        if (r.ok) { this.broadcast2(); this.applyView(this.engine.getViewFor(this.me.id)); }
+        return;
+      }
     } else {
       if (data.k === 'st') { this._snap = data.snap; return; }
       if (from !== this.hostId) return;
@@ -616,12 +755,16 @@ export class GarticUI {
 
   appendChat(msg) {
     if (!msg || !msg.text) return;
+    // Déduplication : un message peut revenir à son auteur (diffusion salon qui
+    // inclut l'émetteur, ou re-synchro via la vue). On l'identifie par son id
+    // et on ignore les exemplaires déjà affichés → plus de doublon à l'écran.
+    if (msg.id && this.chat.some((m) => m.id === msg.id)) return;
     this.chat.push(msg);
     if (this.chat.length > CHAT_MAX) this.chat.shift();
     this.renderChat();
   }
   pushChatFrom(from, text) {
-    const msg = { from, pseudo: this.engine.pseudoOf(from), text: String(text).slice(0, 240), ts: Date.now() };
+    const msg = { id: chatId(), from, pseudo: this.engine.pseudoOf(from), text: String(text).slice(0, 240), ts: Date.now() };
     this.appendChat(msg);
     this.broadcast({ k: 'chat', msg });
   }
@@ -629,10 +772,11 @@ export class GarticUI {
     const text = this.chatInput.value.trim();
     if (!text) return;
     this.chatInput.value = '';
+    this.chatInput.focus();               // on garde le focus sur le champ de saisie
     if (this.isHost) { this.engine.addChat(this.me.id, text); this.pushChatFrom(this.me.id, text); }
     else {
-      const msg = { from: this.me.id, pseudo: this.me.pseudo, text: text.slice(0, 240), ts: Date.now() };
-      this.appendChat(msg);
+      // L'invité n'affiche PAS en local : il attend le message estampillé par le
+      // Host (avec son id), ce qui évite le doublon quand la diffusion lui revient.
       this.toHost({ k: 'chat', text });
     }
   }
@@ -663,7 +807,18 @@ export class GarticUI {
   applyView(view) {
     if (!view) return;
     this.view = view;
-    if (Array.isArray(view.chat) && view.chat.length >= this.chat.length) { this.chat = view.chat.slice(-CHAT_MAX); this.renderChat(); }
+    // Fusion du chat porté par la vue, SANS écraser bêtement (ce qui re-render
+    // à chaque vue et arrache le focus du champ de saisie) : on n'ajoute que les
+    // messages réellement nouveaux, identifiés par leur id.
+    if (Array.isArray(view.chat) && view.chat.length) {
+      const connus = new Set(this.chat.map((m) => m.id));
+      const nouveaux = view.chat.filter((m) => !m.id || !connus.has(m.id));
+      if (nouveaux.length) {
+        this.chat.push(...nouveaux);
+        if (this.chat.length > CHAT_MAX) this.chat = this.chat.slice(-CHAT_MAX);
+        this.renderChat();
+      }
+    }
 
     this.phaseEl.textContent = `${PHASE_LABEL[view.phase] || ''}`;
     if (PHASES.includes(view.phase)) {
@@ -706,15 +861,34 @@ export class GarticUI {
   }
   updateFini() { if (this.finiBtn) this.finiBtn.disabled = this.locked; }
 
-  renderWrite() {
+  renderWrite(view) {
     this.inputEl = h('textarea', { className: 'gp-input', rows: '3', placeholder: 'Ex. « Un chat astronaute qui mange une pizza »', maxlength: '140' });
     this.stage.replaceChildren(
       h('div', { className: 'gp-instr' }, ['Écris une phrase que ', h('b', {}, 'quelqu\'un d\'autre'), ' devra dessiner.']),
       this.inputEl,
       this.makeFini(),
       h('div', { className: 'gp-wait' }, 'Astuce : plus c\'est absurde, plus c\'est drôle.'),
+      this.renderReglageManches(view),
     );
     this.inputEl.focus();
+  }
+
+  /**
+   * Réglage du nombre de manches — visible par le Host au tout début de la
+   * partie seulement (après, changer le total fausserait le déroulé).
+   */
+  renderReglageManches(view) {
+    if (!this.isHost || !this.engine) return '';
+    if (this.engine.game > 1) return '';
+    const sel = h('select', { className: 'gp-manches__sel' },
+      [1, 2, 3, 4, 5].map((n) => h('option', { value: String(n) }, `${n} manche${n > 1 ? 's' : ''}`)));
+    sel.value = String(this.engine.nbManches || 1);
+    sel.addEventListener('change', () => {
+      this.engine.nbManches = Math.max(1, Math.min(10, Number(sel.value) || 1));
+      try { localStorage.setItem('gp:manches', String(this.engine.nbManches)); } catch { /* stockage indisponible */ }
+      this.broadcast2();
+    });
+    return h('div', { className: 'gp-manches' }, [h('span', {}, 'Nombre de manches : '), sel]);
   }
 
   renderDraw(view) {
@@ -789,12 +963,58 @@ export class GarticUI {
       nav.append(h('span', { className: 'gp-wait' }, 'Le Host fait défiler l\'album…'));
     }
     this.stage.replaceChildren(h('div', { className: 'gp-album' }, [
-      h('div', { className: 'gp-album__origin' }, `Album ${a.chain + 1} / ${a.total}`),
-      ...cards, nav,
+      h('div', { className: 'gp-album__origin' }, `Album ${a.chain + 1} / ${a.total}${view.nbManches > 1 ? ` — manche ${view.game}/${view.nbManches}` : ''}`),
+      ...cards,
+      this.renderVote(view),
+      nav,
     ]));
   }
 
-  renderDone() {
+  /**
+   * Panneau de vote : chaque joueur (sauf l'auteur du dessin) note de 0 à 10 la
+   * correspondance entre la consigne de départ et le dessin qui en est sorti.
+   */
+  renderVote(view) {
+    const v = view.vote;
+    if (!v || !v.ouvert) return '';
+    const moyenneTxt = v.nb
+      ? `Moyenne : ${v.moyenne}/10 (${v.nb} vote${v.nb > 1 ? 's' : ''})`
+      : 'Aucun vote pour l\u2019instant';
+
+    if (!v.peutVoter) {
+      return h('div', { className: 'gp-vote' }, [
+        h('div', { className: 'gp-vote__title' }, v.estMonDessin ? '🎨 Votre dessin est jugé…' : '🗳️ Vote en cours'),
+        h('div', { className: 'gp-vote__avg' }, moyenneTxt),
+      ]);
+    }
+
+    const boutons = Array.from({ length: 11 }, (_, n) => h('button', {
+      className: `gp-vote__btn${v.maNote === n ? ' on' : ''}`,
+      onClick: () => this.envoyerVote(v.chain, n),
+    }, String(n)));
+
+    return h('div', { className: 'gp-vote' }, [
+      h('div', { className: 'gp-vote__title' }, 'Le dessin correspond-il à la consigne ?'),
+      h('div', { className: 'gp-vote__row' }, boutons),
+      h('div', { className: 'gp-vote__avg' }, [
+        v.maNote != null ? h('b', {}, `Votre note : ${v.maNote}/10 · `) : '',
+        moyenneTxt,
+      ]),
+    ]);
+  }
+
+  /** Envoie la note au Host (ou l'applique directement si l'on EST le Host). */
+  envoyerVote(chain, note) {
+    if (this.isHost) {
+      this.engine.castVote(chain, this.me.id, note);
+      this.broadcast2();
+      this.applyView(this.engine.getViewFor(this.me.id));
+    } else {
+      this.toHost({ k: 'vote', chain, note });
+    }
+  }
+
+  renderDone(view) {
     const nav = h('div', { className: 'gp-navrow' });
     if (this.isHost) {
       nav.append(
@@ -802,7 +1022,18 @@ export class GarticUI {
         h('button', { className: 'gp-btn gp-btn--ghost', onClick: () => this.hostQuit() }, 'Retour au salon'),
       );
     } else nav.append(h('span', { className: 'gp-wait' }, 'En attente du Host…'));
+    // Classement par moyenne des notes reçues sur ses dessins.
+    const cl = view?.classement ?? [];
+    const podium = cl.length ? h('div', { className: 'gp-rank' }, [
+      h('div', { className: 'gp-rank__title' }, '🏆 Meilleurs dessinateurs (note moyenne)'),
+      ...cl.map((p, i) => h('div', { className: `gp-rank__row${i === 0 && p.moyenne != null ? ' top' : ''}` }, [
+        h('span', { className: 'gp-rank__pos' }, `${i + 1}.`),
+        h('b', {}, p.pseudo),
+        h('span', { className: 'gp-rank__score' }, p.moyenne == null ? ' — non noté' : ` ${p.moyenne}/10 (${p.nbVotes} vote${p.nbVotes > 1 ? 's' : ''})`),
+      ])),
+    ]) : '';
     this.stage.replaceChildren(h('div', { className: 'gp-album' }, [
+      podium,
       h('div', { className: 'gp-instr' }, '🎉 Fin de l\'album ! Merci d\'avoir joué.'), nav,
     ]));
   }
@@ -839,8 +1070,13 @@ export class GarticUI {
 
   renderChat() {
     const atBottom = this.chatLog.scrollHeight - this.chatLog.scrollTop - this.chatLog.clientHeight < 40;
+    const avaitFocus = document.activeElement === this.chatInput;
     this.chatLog.replaceChildren(...this.chat.map((m) => h('div', { className: 'gp-msg' }, [h('b', {}, `${m.pseudo} `), h('span', {}, m.text)])));
+    // On ne descend au dernier message QUE si l'on y était déjà (sinon on
+    // arrache la lecture de qui a remonté), et on ne touche jamais le focus du
+    // champ de saisie : rendre le chat ne doit pas interrompre la frappe.
     if (atBottom) this.chatLog.scrollTop = this.chatLog.scrollHeight;
+    if (avaitFocus) this.chatInput.focus();
   }
 
   status(msg) { this.subEl.textContent = msg; this.subEl.style.display = ''; }

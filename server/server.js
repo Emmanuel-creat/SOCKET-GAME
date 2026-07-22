@@ -4,6 +4,7 @@
  * Aucune logique métier ici — elle vit dans users/, rooms/, lobby/, sockets/.
  */
 import http from 'node:http';
+import { ClassementService } from './classement/ClassementService.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -56,6 +57,10 @@ const users = new UserManager();
 const rooms = new RoomManager({ users });
 const lobby = new LobbyManager({ io, users, rooms, gameRegistry });
 const admin = new AdminService({ io, users, rooms, gameRegistry });
+// Classement général (victoires tous jeux). Le fichier peut être placé sur un
+// disque persistant via CLASSEMENT_FILE ; sinon il vit dans le dossier data/
+// local (réinitialisé à chaque redéploiement sur une offre sans disque).
+const classement = new ClassementService(process.env.CLASSEMENT_FILE || './data/classement.json');
 const diagnostics = new DiagnosticService({ io, users, rooms, gameRegistry, admin });
 // Grâce de reconnexion : un joueur en partie qui perd sa socket garde sa place
 // (et son identifiant) le temps de revenir — un F5 n'est plus une exclusion.
@@ -66,7 +71,7 @@ setInterval(() => admin.diffuser(), 2000);
 
 io.on('connection', (socket) => {
   admin.onConnect(socket);
-  registerSocketHandlers({ io, socket, users, rooms, lobby, gameRegistry, admin, diagnostics, grace });
+  registerSocketHandlers({ io, socket, users, rooms, lobby, gameRegistry, admin, diagnostics, grace, classement });
 });
 
 httpServer.listen(PORT, () => {

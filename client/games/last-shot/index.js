@@ -17,7 +17,7 @@
  */
 import {
   LastShotEngine, PREP_MS, PER_SHOT_MS, RESOLUTION_BUFFER_MS,
-  ARENA_BASE_RADIUS, BONUS_ICONS, BONUS_LABELS,
+  ARENA_BASE_RADIUS, BONUS_TYPES, BONUS_ICONS, BONUS_LABELS, BONUS_DESCRIPTIONS,
 } from './engine.js';
 
 const TICK_MS = 70;
@@ -43,6 +43,17 @@ const CSS = `
 .ls__modeBtn { border-radius: 12px; border: 1px solid var(--glass-border, rgba(255,255,255,.18)); background: rgba(255,255,255,.06); color: inherit; padding: 10px 14px; font-size: .85rem; cursor: pointer; max-width: 200px; }
 .ls__modeBtn.active { border-color: #4c8dff; background: rgba(76,141,255,.18); }
 .ls__startBtn { border-radius: 999px; border: none; background: linear-gradient(135deg,#ff5c5c,#ffb14a); color: #1a1002; font-weight: 800; padding: 10px 26px; font-size: 1rem; cursor: pointer; }
+.ls__overlay--setup { border-radius: 16px; overflow-y: auto; padding: 20px; gap: 10px; }
+.ls__setupLabel { font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--text-dim,#aab); margin-top: 4px; }
+.ls__wins { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.ls__winBtn { border-radius: 10px; border: 1px solid var(--glass-border, rgba(255,255,255,.18)); background: rgba(255,255,255,.06); color: inherit; padding: 8px 12px; font-size: .82rem; cursor: pointer; }
+.ls__winBtn.active { border-color: #2fbf71; background: rgba(47,191,113,.18); }
+.ls__powers { max-width: 380px; width: 100%; text-align: left; }
+.ls__powers summary { cursor: pointer; font-size: .82rem; color: var(--text-dim,#aab); text-align: center; }
+.ls__powerGrid { display: grid; gap: 5px; margin-top: 8px; }
+.ls__powerItem { font-size: .78rem; line-height: 1.4; }
+.ls__powerIcon { margin-right: 4px; }
+.ls__powerDesc { color: var(--text-dim,#aab); }
 .ls__row { display: flex; gap: 18px; align-items: center; justify-content: space-between; width: min(96vw, 640px); }
 .ls__pad { display: none; gap: 4px; }
 .ls__dpad { display: grid; grid-template-columns: repeat(3, 50px); grid-template-rows: repeat(3, 50px); gap: 4px; }
@@ -119,7 +130,7 @@ class LastShotUI {
       });
       this.showModeOverlay();
       this.timers.loop = setInterval(() => this.hostLoop(), TICK_MS);
-      this.render(this.engine.getState(Date.now()));
+      this.render(this.engine.getViewFor(this.me.id, Date.now()));
     } else {
       this.unsubscribe = this.ctx.onMessage(({ from, data }) => {
         if (from !== this.hostId || !data) return;
@@ -185,14 +196,39 @@ class LastShotUI {
       onClick: () => { this.selectedMode = id; this.showModeOverlay(); },
     }, [h('div', { style: 'font-weight:700;' }, label), h('div', { style: 'font-size:.75rem;opacity:.8;' }, desc)]);
 
+    // Best-of : nombre de manches gagnantes pour remporter le match.
+    if (this.selectedWins == null) this.selectedWins = 3;
+    const winsBtn = (n) => h('button', {
+      className: `ls__winBtn${this.selectedWins === n ? ' active' : ''}`,
+      onClick: () => { this.selectedWins = n; this.showModeOverlay(); },
+    }, n === 1 ? '1 (mort subite)' : `${n} gagnantes`);
+
+    // Panneau descriptif des pouvoirs ramassables.
+    const powerRows = BONUS_TYPES.map((k) => h('div', { className: 'ls__powerItem' }, [
+      h('span', { className: 'ls__powerIcon' }, BONUS_ICONS[k] || '•'),
+      h('b', {}, BONUS_LABELS[k]),
+      h('span', { className: 'ls__powerDesc' }, ` — ${BONUS_DESCRIPTIONS[k]}`),
+    ]));
+
     this.overlayEl?.remove();
-    this.overlayEl = h('div', { className: 'ls__overlay' }, [
+    this.overlayEl = h('div', { className: 'ls__overlay ls__overlay--setup' }, [
       h('h3', {}, '🎯 Last Shot'),
-      h('div', { className: 'sub' }, `${this.ctx.players.length} joueurs sur la plateforme. Choisissez le mode de résolution des tirs :`),
+      h('div', { className: 'sub' }, `${this.ctx.players.length} joueurs sur la plateforme.`),
+
+      h('div', { className: 'ls__setupLabel' }, 'Mode de résolution des tirs'),
       h('div', { className: 'ls__modes' }, [
         modeBtn('sequentiel', '🔀 Séquentiel', 'Chaque joueur tire à son tour, dans un ordre aléatoire.'),
-        modeBtn('simultane', '⚡ Tir simultané', 'Tout le monde tire en même temps : éliminations croisées possibles, parfois aucun survivant.'),
+        modeBtn('simultane', '⚡ Tir simultané', 'Tout le monde tire en même temps : éliminations croisées possibles.'),
       ]),
+
+      h('div', { className: 'ls__setupLabel' }, 'Manches gagnantes (best-of)'),
+      h('div', { className: 'ls__wins' }, [1, 2, 3, 5].map(winsBtn)),
+
+      h('details', { className: 'ls__powers' }, [
+        h('summary', {}, '💥 Pouvoirs à ramasser (voir la liste)'),
+        h('div', { className: 'ls__powerGrid' }, powerRows),
+      ]),
+
       h('button', { className: 'ls__startBtn', onClick: () => this.startMatch() }, '▶️ Commencer la partie'),
     ]);
     this.arenaWrap.append(this.overlayEl);
@@ -202,6 +238,7 @@ class LastShotUI {
     if (!this.engine || this.matchStarted) return;
     this.matchStarted = true;
     this.engine.simultaneous = this.selectedMode === 'simultane';
+    this.engine.winsTarget = Math.max(1, this.selectedWins || 1);
     this.engine.startMatch(Date.now());
     this.overlayEl?.remove();
     this.overlayEl = null;
@@ -216,9 +253,13 @@ class LastShotUI {
     const after = this.engine.phase;
 
     if (this.engine.dirty || before !== after) {
-      const state = this.engine.getState(now);
-      this.ctx.sendMessage({ t: 'state', state });
-      this.render(state);
+      // Vue PERSONNELLE par joueur (positions adverses masquées en préparation).
+      for (const p of this.players) {
+        if (p.id === this.me.id) continue;
+        this.ctx.sendMessage({ t: 'state', state: this.engine.getViewFor(p.id, now) }, p.id);
+      }
+      const mien = this.engine.getViewFor(this.me.id, now);
+      this.render(mien);
       this.engine.dirty = false;
     }
     if (after === 'fin' && before !== 'fin') {
@@ -323,13 +364,17 @@ class LastShotUI {
     let timerLabel = '—';
     if (state.phase === 'preparation') timerLabel = `${Math.ceil(state.prepMsLeft / 1000)}s`;
     else if (state.phase === 'resolution') timerLabel = '🎯 Résolution…';
+    const bo = (state.winsTarget > 1)
+      ? h('span', {}, `🏁 Manche ${state.matchGame || 1} · 1er à ${state.winsTarget}`)
+      : '';
     this.hud.replaceChildren(
-      h('strong', {}, `🎯 Manche ${state.round || 0}`),
+      h('strong', {}, `🎯 Tour ${state.round || 0}`),
+      bo,
       h('span', {}, mode),
       h('span', {}, `${alive} en vie`),
       ...state.players.map((p) => h('span', { className: `ls__score${p.alive ? '' : ' ls--dead'}` }, [
         h('span', { className: 'dot', style: `background:${SLOT_COLORS[p.slot % SLOT_COLORS.length]}` }),
-        `${p.pseudo}${p.kills ? ` (${p.kills}💀)` : ''}`,
+        `${p.pseudo}${state.winsTarget > 1 ? ` ${'★'.repeat(p.wins || 0)}` : ''}${p.kills ? ` (${p.kills}💀)` : ''}`,
       ])),
       h('span', { className: 'tl' }, timerLabel),
     );
@@ -459,6 +504,7 @@ class LastShotUI {
 
     // Joueurs.
     for (const p of state.players) {
+      if (p.hidden || p.x == null) continue;   // adversaire masqué en préparation : pas dessiné
       const isDeadVisual = elapsedMs === null ? !p.alive : dead.has(p.id);
       const [x, y] = this.toCanvas(p.x, p.y);
       ctx.globalAlpha = isDeadVisual ? 0.18 : 1;

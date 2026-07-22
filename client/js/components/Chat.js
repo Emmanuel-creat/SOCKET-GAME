@@ -38,6 +38,20 @@ export class Chat {
     messages.forEach((m) => this.append(m, { instant: true }));
   }
 
+  /**
+   * Après un re-render de la vue parente, l'élément est détaché puis rattaché
+   * au DOM, ce qui remet scrollTop à 0 (le chat « remonte en haut »). On mémorise
+   * ici si l'on était collé en bas, pour le restaurer une fois rebranché.
+   */
+  captureScroll() {
+    this._wasAtBottom =
+      this.messagesEl.scrollHeight - this.messagesEl.scrollTop - this.messagesEl.clientHeight < 60;
+  }
+
+  restoreScroll() {
+    if (this._wasAtBottom !== false) this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+  }
+
   append(message, { instant = false } = {}) {
     const nearBottom = this.messagesEl.scrollHeight - this.messagesEl.scrollTop - this.messagesEl.clientHeight < 60;
 

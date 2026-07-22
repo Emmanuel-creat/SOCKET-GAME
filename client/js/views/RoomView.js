@@ -49,6 +49,11 @@ export class RoomView {
       this.currentRoomId = room.id;
     }
 
+    // Le re-render détache le chat du DOM (scrollTop repasse à 0). On mémorise
+    // la position avant, on la restaure après : les actions du salon ne font
+    // plus « remonter » le chat, le focus reste sur le dernier message.
+    this.chat.captureScroll();
+
     replaceChildrenOf(
       this.container,
       this.header(room, isHost),
@@ -63,6 +68,8 @@ export class RoomView {
         ]),
       ]),
     );
+
+    this.chat.restoreScroll();
   }
 
   header(room, isHost) {

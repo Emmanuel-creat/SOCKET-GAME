@@ -4,11 +4,12 @@
  * Aucune règle métier ici : uniquement de l'orchestration.
  */
 import { EVENTS } from '../../shared/events.js';
+import { ipDeSocket, cleIdentite } from '../classement/ClassementService.js';
 import { pseudoReserve } from '../users/pseudosReserves.js';
 import { GAME_STATE, LIMITS, ROOM_STATUS } from '../../shared/constants.js';
 import { sanitizeText, isValidChatMessage } from '../../shared/validation.js';
 
-export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRegistry, admin = null, diagnostics = null, grace = null }) {
+export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRegistry, admin = null, diagnostics = null, grace = null, classement = null }) {
   /** Raccourci : émet une erreur normalisée au client courant. */
   const fail = (code, message) => socket.emit(EVENTS.SYS_ERROR, { code, message });
 
@@ -337,10 +338,72 @@ export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRe
     }
   });
 
+
+  /**
+   * Crédite le classement général à la fin d'une partie.
+   *
+   * Détermination des gagnants, par ordre de priorité :
+   *  1. result.winnerIds — tableau : jeux en équipe/rôles (Loup-Garou, Among Us,
+   *     La Traque). Chaque joueur du camp gagnant marque une victoire.
+   *  2. result.winnerId — identifiant unique : jeux individuels.
+   *  3. result.scores — repli : le ou les joueurs au meilleur score (égalités
+   *     comprises), les scores étant indexés par pseudo.
+   *
+   * L'identité retenue est (IP publique + cid navigateur), jamais le pseudo :
+   * changer de nom ne remet pas le compteur à zéro, et deux personnes derrière
+   * la même box restent distinctes.
+   */
+  function enregistrerResultat(room, result) {
+    if (result.interrompu) return;            // partie avortée : ne compte pas
+
+    let gagnants = new Set();
+    if (Array.isArray(result.winnerIds)) {
+      gagnants = new Set(result.winnerIds.filter(Boolean));
+    } else if (result.winnerId) {
+      gagnants = new Set([result.winnerId]);
+    } else if (result.scores && typeof result.scores === 'object') {
+      const paires = Object.entries(result.scores).filter(([, v]) => typeof v === 'number');
+      if (paires.length) {
+        const max = Math.max(...paires.map(([, v]) => v));
+        const pseudosGagnants = new Set(paires.filter(([, v]) => v === max).map(([k]) => k));
+        for (const p of room.players) if (pseudosGagnants.has(p.pseudo)) gagnants.add(p.id);
+      }
+    }
+
+    const participants = room.players.map((p) => {
+      // L'IP vient du socket du joueur : on la relit à chaud pour ne rien stocker
+      // de durable côté utilisateur. ATTENTION : p.id est l'identifiant
+      // UTILISATEUR (UUID), pas l'identifiant de socket — c'est user.socketId
+      // qu'il faut pour retrouver la connexion.
+      const sock = p.socketId ? io.sockets.sockets.get(p.socketId) : null;
+      const ip = sock ? ipDeSocket(sock) : 'inconnue';
+      return {
+        cle: cleIdentite(ip, p.cid),
+        pseudo: p.pseudo,
+        gagnant: gagnants.has(p.id),
+      };
+    });
+
+    classement.enregistrerPartie(participants, room.gameId ?? 'inconnu');
+  }
+
+  socket.on(EVENTS.CLASSEMENT_GET, () => {
+    if (!classement) return socket.emit(EVENTS.CLASSEMENT_DATA, { top: [], moi: null });
+    const user = users.get(socket.id);
+    const cle = cleIdentite(ipDeSocket(socket), user?.cid);
+    socket.emit(EVENTS.CLASSEMENT_DATA, {
+      top: classement.top(50),
+      moi: classement.pour(cle),
+    });
+  });
+
   socket.on(EVENTS.GAME_END, ({ result } = {}) => {
     const user = requireUser();
     const room = user && requireRoom(user);
     if (!room) return;
+
+    // --- Classement général : on crédite les gagnants avant de fermer la partie.
+    if (classement && result) enregistrerResultat(room, result);
 
     rooms.endGame(room);
     // Retour automatique au salon pour tous les membres.

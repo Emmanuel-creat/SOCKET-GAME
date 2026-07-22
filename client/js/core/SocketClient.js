@@ -99,6 +99,7 @@ export class SocketClient {
     s.on(EVENTS.ADMIN_AUTHED, (res) => bus.emit('admin:authed', res));
     s.on(EVENTS.ADMIN_STATS, (stats) => bus.emit('admin:stats', stats));
 
+    s.on(EVENTS.CLASSEMENT_DATA, (data) => bus.emit('classement:data', data));
     s.on(EVENTS.SYS_NOTIFICATION, ({ type, message }) => bus.emit('notify', { type, message }));
     s.on(EVENTS.SYS_ERROR, ({ code, message }) => {
       bus.emit('sys:error', { code, message });
@@ -110,6 +111,8 @@ export class SocketClient {
   }
 
   // --- API sortante (une méthode par intention utilisateur) ---
+
+  demanderClassement() { this.socket.emit(EVENTS.CLASSEMENT_GET, {}); }
 
   adminAuth(code) { this.socket.emit(EVENTS.ADMIN_AUTH, { code }); }
   adminLeave() { this.socket.emit(EVENTS.ADMIN_LEAVE); }

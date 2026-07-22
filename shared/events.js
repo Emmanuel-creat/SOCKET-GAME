@@ -42,6 +42,10 @@ export const EVENTS = Object.freeze({
 
   // --- Système ---
   SYS_NOTIFICATION: 'sys:notification', // serveur -> client : { type, message }
+  // Classement général (victoires tous jeux, identité = IP + cid navigateur).
+  CLASSEMENT_GET: 'classement:get',   // client -> serveur : {}
+  CLASSEMENT_DATA: 'classement:data', // serveur -> client : { top:[], moi }
+
   SYS_ERROR: 'sys:error', // serveur -> client : { code, message }
   SYS_PING: 'sys:ping', // serveur -> client : { t } (mesure de latence)
   SYS_PONG: 'sys:pong', // client -> serveur : { t }
