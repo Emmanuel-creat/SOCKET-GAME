@@ -21,7 +21,7 @@
       "nom": "Cache-Cache",
       "description": "Cachez votre forme dans le décor : le Chasseur cherche à l'aveugle, guidé par la chaleur.",
       "icone": "🙈",
-      "image": "/games/cache-cache/assets/cover.png",
+      "image": "/games/cache-cache/assets/cover.jpg",
       "joueursMin": 2,
       "joueursMax": 8,
       "etat": "disponible",
