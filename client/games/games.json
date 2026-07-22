@@ -246,7 +246,7 @@
       "nom": "Bomberman",
       "description": "Bombes, briques et bonus : soyez le dernier debout dans l'arène (premier à 3 manches).",
       "icone": "💣",
-      "image": "/games/bomberman/assets/cover.png",
+      "image": "/games/bomberman/assets/cover.jpg",
       "joueursMin": 2,
       "joueursMax": 8,
       "etat": "disponible",
