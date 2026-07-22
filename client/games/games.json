@@ -306,7 +306,7 @@
       "nom": "Le Dossier",
       "description": "Caricature, visage déformé ou photo coupée : devinez qui se cache derrière l'indice.",
       "icone": "🖼️",
-      "image": "/games/devine-tete/assets/cover.jpg",
+      "image": "/games/placeholder01/assets/cover.jpg",
       "joueursMin": 2,
       "joueursMax": 8,
       "etat": "disponible",
