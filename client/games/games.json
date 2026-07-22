@@ -291,7 +291,7 @@
       "nom": "Échecs",
       "description": "Le jeu de stratégie ultime : échec et mat en ligne de mire.",
       "icone": "♟️",
-      "image": "/games/echecs/assets/cover.png",
+      "image": "/games/echecs/assets/cover.jpg",
       "joueursMin": 1,
       "joueursMax": 2,
       "etat": "disponible",
