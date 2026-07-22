@@ -28,15 +28,40 @@ const PORT = process.env.PORT || 3000;
 const app = express();
 // Derrière le proxy de Render : sans ceci, tous les clients auraient l'IP du proxy.
 app.set('trust proxy', true);
+/**
+ * Politique de cache. Le code (HTML/JS/CSS) doit être revalidé à CHAQUE
+ * chargement : sinon, après un déploiement, le navigateur peut mélanger un
+ * index.html neuf avec un main.js encore en cache — l'écran s'affiche alors
+ * incomplet ou vide, sans erreur visible. « no-cache » ne veut pas dire
+ * « retélécharger » : le navigateur demande, et le serveur répond 304 (rien à
+ * transmettre) si le fichier n'a pas bougé, grâce à l'ETag. Les images, sons et
+ * polices, eux, gardent un cache long : ils changent rarement.
+ */
+const CODE = /\.(html|js|mjs|css|json)$/i;
+function politiqueCache(res, filePath) {
+  if (CODE.test(filePath)) res.setHeader('Cache-Control', 'no-cache');
+  else res.setHeader('Cache-Control', 'public, max-age=604800');   // 7 jours
+}
+
 app.use(express.static(path.join(ROOT, 'client'), {
-  maxAge: '1h',        // le navigateur ne re-télécharge plus les assets à chaque partie
   etag: true,
+  setHeaders: politiqueCache,
 }));
 // Le code partagé est servi tel quel : le client l'importe en ES module.
-app.use('/shared', express.static(path.join(ROOT, 'shared')));
+app.use('/shared', express.static(path.join(ROOT, 'shared'), {
+  etag: true,
+  setHeaders: politiqueCache,
+}));
 
 // Petit endpoint de santé, utile en supervision/déploiement.
-app.get('/health', (_req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
+app.get('/health', (_req, res) => res.json({
+  status: 'ok',
+  uptime: process.uptime(),
+  // Repère de déploiement : permet de vérifier d'un coup d'œil si le SERVEUR
+  // exécute bien la dernière version (utile quand le navigateur, lui, garde
+  // encore d'anciens fichiers en cache).
+  fonctionnalites: { classement: !!classement },
+}));
 
 /* ------------------------------------------------------------------ *
  * Classement : le fichier de données, servi en dur par le site.
