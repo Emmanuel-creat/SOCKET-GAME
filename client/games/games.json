@@ -333,10 +333,10 @@
     },
     {
       "id": "gemplacement",
-      "nom": "The phone",
-      "description": "Les imaginations de Nathan sont sans limites ATTENTION.",
+      "nom": "Notre équipe",
+      "description": "Une équipe de drogués trisomiques peine nuit et jour au développement de cette application.",
       "icone": "📦",
-      "image": "/games/placeholder03/assets/cover.png",
+      "image": "/games/placeholder03/assets/cover.jpg",
       "joueursMin": 2,
       "joueursMax": 16,
       "etat": "en-developpement",
