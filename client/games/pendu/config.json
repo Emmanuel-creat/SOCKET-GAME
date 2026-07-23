@@ -1,0 +1,24 @@
+{
+  "id": "pendu",
+  "nom": "Le Pendu",
+  "version": "1.0.0",
+  "joueurs": { "min": 2, "max": 8 },
+  "architecture": "host-autoritaire",
+  "communication": "game:message (relais générique du moteur)",
+  "banque": {
+    "fichier": "mots.js",
+    "mots": 226,
+    "phrases": 116,
+    "categoriesMots": ["Animaux", "Métiers", "Nourriture", "Objets", "Nature", "Sports", "Transports", "Musique", "Vêtements", "Émotions"],
+    "categoriesPhrases": ["Proverbe", "Expression", "Titre"]
+  },
+  "regles": {
+    "modes": ["mot", "phrase"],
+    "erreursAutoriseesDisponibles": [6, 8, 10, 12],
+    "nombreDeManchesDisponible": [3, 5, 7, 10],
+    "points": {
+      "lettreCorrecte": "10 points par occurrence révélée",
+      "solutionComplete": "bonus de 50 points, termine la manche immédiatement"
+    }
+  }
+}
