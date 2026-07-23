@@ -338,10 +338,10 @@
       "icone": "📦",
       "image": "/games/placeholder03/assets/cover.jpg",
       "joueursMin": 2,
-      "joueursMax": 16,
-      "etat": "en-developpement",
+      "joueursMax": 1000,
+      "etat": "disponible",
       "version": "1.0.0",
-      "auteur": "Nathan",
+      "auteur": "Manu",
       "module": "index.js",
       "chemin": "/games/placeholder03/",
       "visible": true
