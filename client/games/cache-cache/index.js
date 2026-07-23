@@ -243,6 +243,51 @@ function roundRectPath(ctx, x, y, w, hgt, r) {
   ctx.closePath();
 }
 
+/*
+ * Cadrage du dessin de camouflage — UN SEUL repère pour deux endroits.
+ *
+ * La texture peinte dans la page de dessin est ensuite reposée sur la carte.
+ * Pour qu'elle retombe pile sur la silhouette, les deux doivent s'accorder sur
+ * la même convention :
+ *   - le sprite mesure r * SPRITE_SCALE de côté ;
+ *   - le point de référence du personnage (cx, cy) se trouve à la fraction
+ *     SPRITE_ANCHOR de ce sprite, horizontalement comme verticalement.
+ *
+ * Bug corrigé : la page de dessin centrait la silhouette (repère à 0,5) alors
+ * que le rendu reposait la texture avec un repère à 0,62 — le camouflage
+ * remontait donc de ~21 px et se retrouvait tronqué de 15 % en bas.
+ * Ces constantes sont désormais la seule source de vérité des deux côtés.
+ */
+const SPRITE_SCALE = 6.4;
+const SPRITE_ANCHOR = 0.5;
+
+/*
+ * Marges de placement d'un Cacheur. Le personnage déborde autour de son point
+ * (tête au-dessus, corps en dessous) : collé au bord, il se retrouvait coupé —
+ * moche, et surtout injuste, un personnage tronqué étant plus dur à repérer ET
+ * à toucher. Mettre MARGES_PERSO à false rétablit le placement libre.
+ */
+const MARGES_PERSO = true;
+const PERSO_R = 0.028;                            // rayon de la tête (fraction du canevas)
+const PERSO_HAUT = PERSO_R * 2.5;                 // sommet de la tête au-dessus du point
+const PERSO_BAS = PERSO_R * 0.3 + PERSO_R * 2.6;  // bas du corps en dessous
+const PERSO_COTE = (PERSO_R * 1.7) / 2;           // demi-largeur du corps
+
+/** Garde le personnage entièrement visible dans le cadre. */
+function poserPerso(x, y) {
+  if (!MARGES_PERSO) return { x, y };
+  return {
+    x: Math.min(1 - PERSO_COTE, Math.max(PERSO_COTE, x)),
+    y: Math.min(1 - PERSO_BAS, Math.max(PERSO_HAUT, y)),
+  };
+}
+
+/** Pose une texture de camouflage autour du point (cx, cy), selon le repère commun. */
+function drawSprite(ctx, img, cx, cy, r) {
+  const taille = r * SPRITE_SCALE;
+  ctx.drawImage(img, cx - taille * SPRITE_ANCHOR, cy - taille * SPRITE_ANCHOR, taille, taille);
+}
+
 /** Trace le contour du personnage (corps + tête) comme UN SEUL chemin combiné, réutilisable
  * aussi bien pour un fill() couleur plate que pour un clip() + drawImage() (texture peinte). */
 function buildSilhouettePath(ctx, cx, cy, r) {
@@ -268,8 +313,7 @@ function drawCharacter(ctx, size, x, y, color, { locked = false, found = false, 
   if (textureImg && !found) {
     ctx.save();
     ctx.clip();
-    const spriteSize = r * 6.4;
-    ctx.drawImage(textureImg, cx - spriteSize / 2, cy - spriteSize * 0.62, spriteSize, spriteSize);
+    drawSprite(ctx, textureImg, cx, cy, r);
     ctx.restore();
     ctx.strokeStyle = 'rgba(0,0,0,0.55)';
     ctx.lineWidth = Math.max(1, size * 0.0022);
@@ -792,16 +836,18 @@ class CacheCacheUI {
     const fgCtx = fgCanvas.getContext('2d');
     this.drawZoomedBackground(bgCtx, MODAL_SIZE, this.myPos.x, this.myPos.y, 0.14);
 
-    const r = MODAL_SIZE * 0.16;
-    const ccx = MODAL_SIZE / 2; const ccy = MODAL_SIZE / 2;
+    // La zone de dessin EST le sprite : la silhouette doit donc y occuper
+    // exactement la même part qu'au rendu, sans quoi le camouflage serait
+    // reposé à une échelle légèrement différente.
+    const r = MODAL_SIZE / SPRITE_SCALE;
+    const ccx = MODAL_SIZE * SPRITE_ANCHOR; const ccy = MODAL_SIZE * SPRITE_ANCHOR;
     const paintSilhouette = () => {
       buildSilhouettePath(fgCtx, ccx, ccy, r);
       fgCtx.save();
       fgCtx.clip();
       const existing = this.getTextureImage(this.myTexture, null);
       if (existing) {
-        const spriteSize = r * 6.4;
-        fgCtx.drawImage(existing, ccx - spriteSize / 2, ccy - spriteSize * 0.62, spriteSize, spriteSize);
+        drawSprite(fgCtx, existing, ccx, ccy, r);
       } else {
         fgCtx.fillStyle = this.myColor;
         fgCtx.fillRect(0, 0, MODAL_SIZE, MODAL_SIZE);
@@ -925,8 +971,9 @@ class CacheCacheUI {
       return;
     }
     if (this.myLocked) { this.setStatus('Déverrouille pour te déplacer.'); return; }
-    this.myPos = { x, y };
-    this.throttledSendMove(x, y);
+    // Placement seulement : le tir et le viseur du Chasseur restent libres.
+    this.myPos = poserPerso(x, y);
+    this.throttledSendMove(this.myPos.x, this.myPos.y);
     this.redrawHideStage();
   }
 
@@ -1118,7 +1165,11 @@ const CSS = `
 .cc__colorswatch{ width:26px; height:26px; border-radius:50%; border:2px solid rgba(255,255,255,.5); box-shadow:0 0 0 1px rgba(0,0,0,.4); }
 .cc__bullets{ font-weight:700; font-size:.85rem; }
 .cc__hint{ font-size:.78rem; color:var(--text-dim,#aab); text-align:center; }
-.cc__stage{ width:min(640px,100%); aspect-ratio:1/1; max-height:64vh; border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,.4); cursor:crosshair; background:#111; }
+/* Le canevas contient une image CARRÉE : sa boîte doit le rester, sinon le
+   navigateur étire le contenu (personnages aplatis). « aspect-ratio » et
+   « max-height » se contredisent — la limite de hauteur passe donc dans la
+   largeur. */
+.cc__stage{ width:min(640px,100%,64vh); aspect-ratio:1/1; border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,.4); cursor:crosshair; background:#111; }
 
 .cc__blackout{ flex:1; display:flex; align-items:center; justify-content:center; width:100%; min-height:280px; background:#05050a; border-radius:14px; }
 .cc__blackout-inner{ text-align:center; display:flex; flex-direction:column; align-items:center; gap:6px; padding:24px; }
