@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Diagnostic du déploiement — Arcade</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0; padding: 24px; background: #0e1017; color: #e8eaf0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.5;
+    }
+    h1 { font-size: 1.25rem; margin: 0 0 4px; }
+    .sub { color: #99a; font-size: .85rem; margin-bottom: 20px; }
+    .verdict { padding: 14px 16px; border-radius: 12px; margin-bottom: 20px; font-weight: 600; }
+    .verdict--ok { background: rgba(47,191,113,.15); border: 1px solid rgba(47,191,113,.5); }
+    .verdict--ko { background: rgba(255,92,92,.15); border: 1px solid rgba(255,92,92,.5); }
+    .verdict--wait { background: rgba(255,215,107,.12); border: 1px solid rgba(255,215,107,.4); }
+    table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+    th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid rgba(255,255,255,.08); }
+    th { color: #99a; font-weight: 500; font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; }
+    .ok { color: #6ee7a8; } .ko { color: #ff8080; }
+    code { background: rgba(255,255,255,.08); padding: 1px 6px; border-radius: 5px; font-size: .85em; }
+    .note { margin-top: 22px; padding: 14px 16px; background: rgba(255,255,255,.04);
+      border-radius: 12px; font-size: .86rem; color: #c3c7db; }
+    .note b { color: #e8eaf0; }
+  </style>
+</head>
+<body>
+  <h1>🩺 Diagnostic du déploiement</h1>
+  <div class="sub">Cette page vérifie ce que le serveur envoie réellement à votre navigateur.</div>
+
+  <div id="verdict" class="verdict verdict--wait">Vérification en cours…</div>
+
+  <table>
+    <thead><tr><th>Contrôle</th><th>Résultat</th></tr></thead>
+    <tbody id="lignes"></tbody>
+  </table>
+
+  <div class="note" id="conseil"></div>
+
+<script type="module">
+const lignes = document.getElementById('lignes');
+const resultats = [];
+
+function ajouter(nom, ok, detail) {
+  resultats.push({ nom, ok });
+  const tr = document.createElement('tr');
+  const td1 = document.createElement('td'); td1.textContent = nom;
+  const td2 = document.createElement('td');
+  td2.className = ok ? 'ok' : 'ko';
+  td2.textContent = (ok ? '✅ ' : '❌ ') + detail;
+  tr.append(td1, td2); lignes.append(tr);
+}
+
+// Toujours contourner le cache : on veut savoir ce que le SERVEUR a, maintenant.
+const frais = { cache: 'no-store' };
+
+async function texte(url) {
+  const r = await fetch(url + '?t=' + Date.now(), frais);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.text();
+}
+
+// 1. Le serveur tourne-t-il la dernière version ?
+let serveurOk = false;
+try {
+  const sante = JSON.parse(await texte('/health'));
+  serveurOk = sante?.fonctionnalites?.classement === true;
+  ajouter('Serveur à jour (/health)', serveurOk,
+    serveurOk ? 'oui — le classement est actif' : 'ancien serveur : le champ « fonctionnalites » est absent');
+} catch (e) {
+  ajouter('Serveur à jour (/health)', false, 'injoignable — ' + e.message);
+}
+
+// 2. Le fichier de données répond-il ?
+try {
+  const data = JSON.parse(await texte('/classement.json'));
+  const n = Object.keys(data.entrees || {}).length;
+  ajouter('Fichier de classement', true, `${n} joueur(s) enregistré(s)`);
+} catch (e) {
+  ajouter('Fichier de classement', false, 'absent — ' + e.message);
+}
+
+// 3. Le JS envoyé contient-il bien la vue ? (c'est LE point qui coince souvent)
+let jsOk = false;
+try {
+  const main = await texte('/js/main.js');
+  jsOk = main.includes('ClassementView');
+  ajouter('main.js contient la vue Classement', jsOk,
+    jsOk ? 'oui' : 'NON — le serveur envoie une ancienne version du fichier');
+  const lounge = main.includes('LoungeView');
+  ajouter('main.js contient Pause Café', lounge, lounge ? 'oui' : 'non');
+} catch (e) {
+  ajouter('main.js', false, e.message);
+}
+
+// 4. Les fichiers de la vue existent-ils ?
+for (const f of ['/js/views/ClassementView.js', '/js/views/LoungeView.js', '/css/lounge.css']) {
+  try { await texte(f); ajouter(f, true, 'présent'); }
+  catch (e) { ajouter(f, false, e.message); }
+}
+
+// 5. Politique de cache : le code doit être revalidé à chaque chargement.
+try {
+  const r = await fetch('/js/main.js?t=' + Date.now(), frais);
+  const cc = r.headers.get('cache-control') || '(aucun)';
+  const bon = cc.includes('no-cache');
+  ajouter('Cache du code', bon, bon ? 'correct (revalidé)' : `à corriger : ${cc}`);
+} catch { /* déjà signalé plus haut */ }
+
+/* ---- Verdict ---- */
+const v = document.getElementById('verdict');
+const c = document.getElementById('conseil');
+const tout = resultats.every((r) => r.ok);
+
+if (tout) {
+  v.className = 'verdict verdict--ok';
+  v.textContent = '✅ Tout est en place — le déploiement est à jour.';
+  c.innerHTML = 'Si la page Classement reste vide malgré ce résultat, ouvrez la console '
+    + '(<code>F12</code> → onglet Console) et regardez la première ligne en rouge : '
+    + 'une erreur JavaScript y sera indiquée.';
+} else if (!serveurOk) {
+  v.className = 'verdict verdict--ko';
+  v.textContent = '❌ Le serveur ne tourne pas la dernière version.';
+  c.innerHTML = '<b>Le déploiement n\'est pas passé.</b> Sur Render, ouvrez votre service → '
+    + 'onglet <code>Events</code> : le dernier déploiement est-il « live », ou en échec ? '
+    + 'Vérifiez aussi que le commit contenant <code>server/classement/</code> est bien poussé sur '
+    + 'la branche que Render suit (<code>master</code>). Un « Manual Deploy → Clear build cache '
+    + '&amp; deploy » règle la plupart des cas.';
+} else if (!jsOk) {
+  v.className = 'verdict verdict--ko';
+  v.textContent = '❌ Le serveur est à jour, mais il envoie un ancien main.js.';
+  c.innerHTML = 'Le dossier <code>client/js/</code> n\'a pas été poussé en entier. '
+    + 'Vérifiez que <code>client/js/main.js</code> et <code>client/js/views/ClassementView.js</code> '
+    + 'sont bien dans votre dernier commit.';
+} else {
+  v.className = 'verdict verdict--ko';
+  v.textContent = '❌ Un ou plusieurs fichiers manquent (voir le tableau).';
+  c.innerHTML = 'Les lignes en rouge indiquent les fichiers absents du déploiement : '
+    + 'ajoutez-les au dépôt, puis redéployez.';
+}
+</script>
+</body>
+</html>
