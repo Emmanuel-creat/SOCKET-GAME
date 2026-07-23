@@ -67,7 +67,11 @@ export class ClassementView {
       download: 'classement.json',
     }, ['⬇️ Télécharger le fichier']);
 
-    const champ = el('input', { type: 'file', accept: 'application/json', style: 'display:none' });
+    // ⚠️ `style` doit être un OBJET : el() fait Object.assign(node.style, valeur).
+    // Avec une chaîne, Object.assign copie ses caractères vers les propriétés
+    // indexées de node.style, qui sont en LECTURE SEULE → TypeError, et le
+    // rendu s'arrête net (page blanche).
+    const champ = el('input', { type: 'file', accept: 'application/json', style: { display: 'none' } });
     champ.addEventListener('change', () => this.restaurer(champ.files?.[0]));
     const restaurer = el('button', { className: 'clsmt__btn', onclick: () => champ.click() },
       ['⬆️ Restaurer une sauvegarde']);
