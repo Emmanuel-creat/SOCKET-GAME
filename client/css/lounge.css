@@ -1,0 +1,35 @@
+/* ==========================================================================
+   Pause Café — chat global (liste des présents + discussion).
+
+   Feuille SÉPARÉE volontairement : les styles de cette vue n'ont aucune raison
+   de vivre dans views.css, qui évolue de son côté. Ainsi, ajouter Pause Café
+   ne demande jamais de réécrire un fichier partagé — et ne peut donc pas
+   effacer par mégarde des styles ajoutés entre-temps (recadrage des jaquettes,
+   par exemple).
+   ========================================================================== */
+
+.lounge-layout {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: var(--gap-m);
+  height: calc(100vh - 64px - 110px);
+  min-height: 420px;
+}
+/* Sur mobile, 100vh passe sous la barre d'adresse : dvh quand c'est géré. */
+@supports (height: 100dvh) {
+  .lounge-layout { height: calc(100dvh - 64px - 110px); }
+}
+
+.lounge-roster-card { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
+.lounge-roster { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; }
+.lounge-roster__item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; border-radius: var(--radius-s); font-size: 0.85rem;
+  background: var(--glass);
+}
+.lounge-layout .chat { flex: 1; min-height: 0; }
+
+@media (max-width: 760px) {
+  .lounge-layout { grid-template-columns: 1fr; height: auto; }
+  .lounge-roster-card { max-height: 160px; }
+}
