@@ -7,10 +7,20 @@ import { el, formatTime } from '../ui/dom.js';
 import { bus } from '../core/EventBus.js';
 
 export class Chat {
-  /** @param {{socket: object}} deps */
-  constructor({ socket }) {
+  /**
+   * @param {{socket: object, title?: string, ariaLabel?: string,
+   *   newMessageEvent?: string, sendMethod?: string}} deps
+   *   `newMessageEvent` / `sendMethod` permettent de réutiliser ce composant
+   *   pour un autre canal que le chat de salon (ex. Pause Café) sans dupliquer
+   *   le rendu des messages.
+   */
+  constructor({
+    socket, title = '💬 Chat du salon', ariaLabel = 'Messages du salon',
+    newMessageEvent = 'chat:newMessage', sendMethod = 'sendChatMessage',
+  } = {}) {
     this.socket = socket;
-    this.messagesEl = el('div', { className: 'chat__messages', tabIndex: 0, 'aria-label': 'Messages du salon' });
+    this.sendMethod = sendMethod;
+    this.messagesEl = el('div', { className: 'chat__messages', tabIndex: 0, 'aria-label': ariaLabel });
 
     this.input = el('input', {
       type: 'text', placeholder: 'Écrire un message…',
@@ -18,7 +28,7 @@ export class Chat {
     });
 
     this.element = el('div', { className: 'card chat' }, [
-      el('h3', { style: { marginBottom: '10px', fontSize: '1rem' } }, ['💬 Chat du salon']),
+      el('h3', { style: { marginBottom: '10px', fontSize: '1rem' } }, [title]),
       this.messagesEl,
       el('form', {
         className: 'chat__form',
@@ -29,7 +39,7 @@ export class Chat {
       ]),
     ]);
 
-    this.unsubscribe = bus.on('chat:newMessage', (message) => this.append(message));
+    this.unsubscribe = bus.on(newMessageEvent, (message) => this.append(message));
   }
 
   /** Charge un historique complet (à l'entrée dans le salon). */
@@ -75,7 +85,7 @@ export class Chat {
   send() {
     const text = this.input.value.trim();
     if (!text) return;
-    this.socket.sendChatMessage(text);
+    this.socket[this.sendMethod](text);
     this.input.value = '';
     this.input.focus();
   }

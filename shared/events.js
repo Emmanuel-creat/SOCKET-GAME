@@ -42,6 +42,14 @@ export const EVENTS = Object.freeze({
 
   // --- Système ---
   SYS_NOTIFICATION: 'sys:notification', // serveur -> client : { type, message }
+  // Pause Café : chat global en direct, hors système de salons.
+  LOUNGE_JOIN: 'lounge:join',              // client -> serveur
+  LOUNGE_LEAVE: 'lounge:leave',            // client -> serveur
+  LOUNGE_MESSAGE: 'lounge:message',        // client -> serveur : { text }
+  LOUNGE_NEW_MESSAGE: 'lounge:newMessage', // serveur -> présents : { message }
+  LOUNGE_HISTORY: 'lounge:history',        // serveur -> client à l'entrée : { messages }
+  LOUNGE_ROSTER: 'lounge:roster',          // serveur -> présents : { roster }
+
   // Classement général (victoires tous jeux, identité = IP + cid navigateur).
   CLASSEMENT_GET: 'classement:get',   // client -> serveur : {}
   CLASSEMENT_DATA: 'classement:data', // serveur -> client : { top:[], moi }

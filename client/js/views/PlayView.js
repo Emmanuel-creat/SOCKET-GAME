@@ -33,8 +33,13 @@ export class PlayView {
     );
   }
 
-  /** Un jeu disponible mène à la création d'un salon pré-configuré avec ce jeu. */
+  /**
+   * Un jeu disponible mène à la création d'un salon pré-configuré avec ce jeu —
+   * SAUF les entrées marquées `sansSalon` (ex. Pause Café), qui n'ont ni hôte,
+   * ni capacité, ni partie : elles mènent directement à leur propre vue.
+   */
   enterGame(game) {
+    if (game.sansSalon) { bus.emit('app:navigate', 'lounge'); return; }
     if (store.get('room')) {
       bus.emit('app:navigate', 'room');
       return;

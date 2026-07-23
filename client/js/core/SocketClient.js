@@ -99,6 +99,10 @@ export class SocketClient {
     s.on(EVENTS.ADMIN_AUTHED, (res) => bus.emit('admin:authed', res));
     s.on(EVENTS.ADMIN_STATS, (stats) => bus.emit('admin:stats', stats));
 
+    // Pause Café (chat global hors salon).
+    s.on(EVENTS.LOUNGE_HISTORY, ({ messages }) => bus.emit('lounge:history', messages));
+    s.on(EVENTS.LOUNGE_NEW_MESSAGE, ({ message }) => bus.emit('lounge:newMessage', message));
+    s.on(EVENTS.LOUNGE_ROSTER, ({ roster }) => bus.emit('lounge:roster', roster));
     s.on(EVENTS.CLASSEMENT_DATA, (data) => bus.emit('classement:data', data));
     s.on(EVENTS.SYS_NOTIFICATION, ({ type, message }) => bus.emit('notify', { type, message }));
     s.on(EVENTS.SYS_ERROR, ({ code, message }) => {
@@ -108,9 +112,17 @@ export class SocketClient {
     });
 
     s.on('disconnect', () => bus.emit('notify', { type: 'error', message: 'Connexion au serveur perdue.' }));
+    // Signal générique de (re)connexion : les vues qui maintiennent un état
+    // côté serveur peuvent s'y réabonner (Pause Café doit rejoindre à nouveau
+    // son canal — après une coupure, le serveur ne se souvient plus de nous).
+    s.on('connect', () => bus.emit('socket:reconnect'));
   }
 
   // --- API sortante (une méthode par intention utilisateur) ---
+
+  joinLounge() { this.socket.emit(EVENTS.LOUNGE_JOIN); }
+  leaveLounge() { this.socket.emit(EVENTS.LOUNGE_LEAVE); }
+  sendLoungeMessage(text) { this.socket.emit(EVENTS.LOUNGE_MESSAGE, { text }); }
 
   demanderClassement() { this.socket.emit(EVENTS.CLASSEMENT_GET, {}); }
 

@@ -4,6 +4,7 @@
  * Aucune logique métier ici — elle vit dans users/, rooms/, lobby/, sockets/.
  */
 import http from 'node:http';
+import { LoungeService } from './lounge/LoungeService.js';
 import { ClassementService } from './classement/ClassementService.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -109,6 +110,8 @@ const admin = new AdminService({ io, users, rooms, gameRegistry });
 // offre sans disque persistant, où le système de fichiers est effacé à chaque
 // redéploiement ET à chaque réveil), fichier local sinon.
 const classement = new ClassementService();
+// Pause Café : chat global unique, hors système de salons (pas d'hôte, pas de code).
+const lounge = new LoungeService({ io, users });
 classement.charger().then(() => {
   console.log(`[arcade] Classement chargé depuis ${classement.stockage.nom} — ${classement.entrees.size} joueur(s)`);
 });
@@ -122,7 +125,7 @@ setInterval(() => admin.diffuser(), 2000);
 
 io.on('connection', (socket) => {
   admin.onConnect(socket);
-  registerSocketHandlers({ io, socket, users, rooms, lobby, gameRegistry, admin, diagnostics, grace, classement });
+  registerSocketHandlers({ io, socket, users, rooms, lobby, gameRegistry, admin, diagnostics, grace, classement, lounge });
 });
 
 httpServer.listen(PORT, () => {

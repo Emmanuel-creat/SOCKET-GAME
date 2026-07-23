@@ -9,7 +9,7 @@ import { pseudoReserve } from '../users/pseudosReserves.js';
 import { GAME_STATE, LIMITS, ROOM_STATUS } from '../../shared/constants.js';
 import { sanitizeText, isValidChatMessage } from '../../shared/validation.js';
 
-export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRegistry, admin = null, diagnostics = null, grace = null, classement = null }) {
+export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRegistry, admin = null, diagnostics = null, grace = null, classement = null, lounge = null }) {
   /** Raccourci : émet une erreur normalisée au client courant. */
   const fail = (code, message) => socket.emit(EVENTS.SYS_ERROR, { code, message });
 
@@ -397,6 +397,17 @@ export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRe
     });
   });
 
+  // ------------------------------------------------------------------
+  // Pause Café — chat global, sans salon (pas d'hôte, pas de code, pas de partie)
+  // ------------------------------------------------------------------
+
+  socket.on(EVENTS.LOUNGE_JOIN, () => { if (requireUser()) lounge?.join(socket); });
+  socket.on(EVENTS.LOUNGE_LEAVE, () => lounge?.leave(socket));
+  socket.on(EVENTS.LOUNGE_MESSAGE, ({ text } = {}) => {
+    if (!requireUser()) return;
+    lounge?.message(socket, text);
+  });
+
   socket.on(EVENTS.GAME_END, ({ result } = {}) => {
     const user = requireUser();
     const room = user && requireRoom(user);
@@ -419,6 +430,9 @@ export function registerSocketHandlers({ io, socket, users, rooms, lobby, gameRe
 
   socket.on('disconnect', () => {
     admin?.onDisconnect(socket);
+    // Retrait de Pause Café d'abord : ce nettoyage doit avoir lieu même si le
+    // profil n'est plus en mémoire, sinon la personne reste listée « présente ».
+    lounge?.disconnect(socket);
     const user = users.get(socket.id);
     if (!user) return;
 

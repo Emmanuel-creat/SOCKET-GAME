@@ -15,6 +15,7 @@ import { PlayView } from './views/PlayView.js';
 import { RoomsView } from './views/RoomsView.js';
 import { PlayersView } from './views/PlayersView.js';
 import { ClassementView } from './views/ClassementView.js';
+import { LoungeView } from './views/LoungeView.js';
 import { RoomView } from './views/RoomView.js';
 import { GameView } from './views/GameView.js';
 import { LABELS } from '/shared/constants.js';
@@ -35,6 +36,7 @@ new PlayView({ socket });
 new RoomsView({ socket });
 new PlayersView();
 new ClassementView({ socket });
+new LoungeView({ socket });
 new RoomView({ socket });
 new GameView({ socket });
 

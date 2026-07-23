@@ -1,0 +1,16 @@
+{
+  "id": "pause-cafe",
+  "nom": "Pause Café",
+  "description": "Un salon de discussion ouvert à tous, sans partie ni équipe : venez papoter.",
+  "icone": "☕",
+  "image": "/games/placeholder03/assets/cover.jpg",
+  "joueursMin": 1,
+  "joueursMax": 99,
+  "etat": "en-developpement",
+  "version": "1.0.0",
+  "auteur": "Nathan",
+  "module": "index.js",
+  "chemin": "/games/placeholder03/",
+  "visible": true,
+  "sansSalon": true
+}

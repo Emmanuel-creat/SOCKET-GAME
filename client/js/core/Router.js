@@ -36,5 +36,8 @@ export class Router {
     );
     // La vue concernée peut se (re)construire à l'activation.
     bus.emit(`view:activated:${view}`);
+    // Signal générique : permet à une vue de savoir qu'on l'a QUITTÉE
+    // (Pause Café s'en sert pour sortir proprement du canal de discussion).
+    bus.emit('view:changed', view);
   }
 }
