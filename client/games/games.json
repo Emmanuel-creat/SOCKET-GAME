@@ -4,7 +4,7 @@
     {
       "id": "loup-garou",
       "nom": "Loup-Garou",
-      "description": "Nuits meurtrières, débats et bluff à l'écrit : le moteur joue le meneur.",
+      "description": "Nuits meurtrières, débats et bluff à l'écrit : ça va etre compliqué de comprendre manu",
       "icone": "🐺",
       "image": "/games/loup-garou/assets/cover.jpg",
       "joueursMin": 5,
@@ -19,7 +19,7 @@
     {
       "id": "cache-cache",
       "nom": "Cache-Cache",
-      "description": "Cachez votre forme dans le décor : le Chasseur cherche à l'aveugle, guidé par la chaleur.",
+      "description": "Cachez-vous dans le décor. Si Nathan est le chercheur, pas besoin de vous dessiner.",
       "icone": "🙈",
       "image": "/games/cache-cache/assets/cover.jpg",
       "joueursMin": 2,
@@ -94,7 +94,7 @@
     {
       "id": "tarot",
       "nom": "Tarot",
-      "description": "Prises, bouts et petit au bout : le tarot à 3 ou 4 joueurs.",
+      "description": "Prises, bouts et petit au bout : le tarot à 3 ou 4 débiles.",
       "icone": "🎴",
       "image": "/games/tarot/assets/cover.jpg",
       "joueursMin": 3,
@@ -124,7 +124,7 @@
     {
       "id": "puissance4",
       "nom": "Puissance 4",
-      "description": "Alignez quatre jetons avant votre adversaire dans ce duel de stratégie.",
+      "description": "Description pour Yoan : Les petits trucs rouges, tu les mets à côté, et à 4 tu obtiens une récompense.",
       "icone": "🔴",
       "image": "/games/puissance4/assets/cover.jpg",
       "joueursMin": 2,
@@ -154,7 +154,7 @@
     {
       "id": "blind-texte",
       "nom": "Blind Texte",
-      "description": "Reconnaissez les paroles, citations etc  plus vite que les autres et grimpez au classement.",
+      "description": "Reconnaissez les paroles, les citations, etc., plus vite que les autres. Un défi facile face à des drogués.",
       "icone": "🎵",
       "image": "/games/blind-test/assets/cover.jpg",
       "joueursMin": 2,
@@ -184,7 +184,7 @@
     {
       "id": "quiz",
       "nom": "Quiz",
-      "description": "Environ 2 400 questions dans 15 catégories : répondez juste et vite pour marquer des points.",
+      "description": "Environ 3 400 questions dans 15 catégories : Jerem n'aurait jamais pu faire un jeu aussi complet.",
       "icone": "❓",
       "image": "/games/quiz/assets/cover.jpg",
       "joueursMin": 2,
@@ -199,12 +199,12 @@
     {
       "id": "pendu",
       "nom": "Pendu",
-      "description": "Devinez le mot lettre par lettre avant que le dessin ne soit complet.",
+      "description": "Devinez le mot avant que le dessin ne soit complet sinon vous finirez comme les mollets de quentin.",
       "icone": "🪢",
       "image": "/games/pendu/assets/cover.jpg",
       "joueursMin": 2,
       "joueursMax": 8,
-      "etat": "en-developpement",
+      "etat": "disponible",
       "version": "0.0.0",
       "auteur": "Manu",
       "module": "index.js",
@@ -244,7 +244,7 @@
     {
       "id": "bomberman",
       "nom": "Bomberman",
-      "description": "Bombes, briques et bonus : soyez le dernier debout dans l'arène (premier à 3 manches).",
+      "description": "Bombes, briques et bonus : Vous avez un avantage contre ces cons de Canadiens qui galèrent dans leurs déplacements.",
       "icone": "💣",
       "image": "/games/bomberman/assets/cover.jpg",
       "joueursMin": 2,
@@ -274,7 +274,7 @@
     {
       "id": "dominos",
       "nom": "Dominos",
-      "description": "Posez vos dominos bout à bout, videz votre main en premier.",
+      "description": "Posez vos dominos bout à bout, videz vos couilles en premier.",
       "icone": "🀄",
       "image": "/games/dominos/assets/cover.jpg",
       "joueursMin": 1,
@@ -304,7 +304,7 @@
     {
       "id": "devine-tete",
       "nom": "Le Dossier",
-      "description": "Caricature, visage déformé ou photo coupée : devinez qui se cache derrière l'indice.",
+      "description": "Caricature, visage déformé ou photo coupée : Même pas besoin de filtre pour Jeremy.",
       "icone": "🖼️",
       "image": "/games/placeholder01/assets/cover.jpg",
       "joueursMin": 2,
@@ -319,7 +319,7 @@
     {
       "id": "la-traque",
       "nom": "La Traque",
-      "description": "Labyrinthe plongé dans le noir : une lampe torche, des balles comptées, un chrono. Restez immobiles.",
+      "description": "Labyrinthe plongé dans le noir : une lampe torche, des balles comptées, un chrono. ",
       "icone": "🔦",
       "image": "/games/la-traque/assets/cover.png",
       "joueursMin": 2,
@@ -339,7 +339,7 @@
       "image": "/games/placeholder03/assets/cover.jpg",
       "joueursMin": 2,
       "joueursMax": 1000,
-      "etat": "disponible",
+      "etat": "en-developpement",
       "version": "1.0.0",
       "auteur": "Manu",
       "module": "index.js",
