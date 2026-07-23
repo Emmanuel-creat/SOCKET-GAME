@@ -358,16 +358,39 @@ class TraqueUI {
   /* ------------------------- entrées ------------------------- */
 
   bindInputs() {
+    /*
+     * IMPORTANT — pourquoi on lit `e.key` et pas `e.code` pour les lettres.
+     *
+     * `e.code` désigne la POSITION PHYSIQUE de la touche, toujours nommée
+     * d'après un clavier QWERTY, quelle que soit la disposition réelle. Sur un
+     * clavier AZERTY, la touche marquée Z renvoie donc `KeyW`, la touche Q
+     * renvoie `KeyA`, et la touche A renvoie `KeyQ` — écouter « KeyZ / KeyQ »
+     * ferait jouer avec les touches marquées W et A. C'est le piège classique.
+     *
+     * `e.key` donne la lettre RÉELLEMENT produite : sur AZERTY, appuyer sur Z
+     * donne bien « z ». On stocke donc la lettre en minuscules (la casse change
+     * quand Maj est enfoncé pour la marche furtive), et on garde `e.code` pour
+     * les touches sans lettre (flèches, Espace, Maj).
+     */
+    const lettre = (e) => (e.key && e.key.length === 1 ? e.key.toLowerCase() : null);
+
     this.onKeyDown = (e) => {
       const k = e.code;
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(k)) e.preventDefault();
       if (k === 'Space') { this.act({ a: 'shoot' }); return; }
-      // Pouvoir de skin : touche A (ou &, même emplacement AZERTY/QWERTY).
-      if (k === 'KeyA') { if (!e.repeat) this.act({ a: 'power' }); return; }
+      const l = lettre(e);
+      // Pouvoir de skin : la touche marquée A du clavier.
+      if (l === 'a') { if (!e.repeat) this.act({ a: 'power' }); return; }
       this.keys.add(k);
+      if (l) this.keys.add(l);
       this.sendInput();
     };
-    this.onKeyUp = (e) => { this.keys.delete(e.code); this.sendInput(); };
+    this.onKeyUp = (e) => {
+      this.keys.delete(e.code);
+      const l = lettre(e);
+      if (l) this.keys.delete(l);
+      this.sendInput();
+    };
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
   }
@@ -375,11 +398,12 @@ class TraqueUI {
   axis() {
     if (this.stick.active) return { dx: this.stick.dx, dy: this.stick.dy };
     const k = this.keys;
-    // Déplacement : ZQSD (AZERTY) ou flèches. La touche A est RÉSERVÉE au
-    // pouvoir de skin — elle n'est donc plus un alias de « gauche » (ce que
-    // faisait le mapping QWERTY WASD, source de conflit avec le pouvoir).
-    const dx = (k.has('ArrowRight') || k.has('KeyD') ? 1 : 0) - (k.has('ArrowLeft') || k.has('KeyQ') ? 1 : 0);
-    const dy = (k.has('ArrowDown') || k.has('KeyS') ? 1 : 0) - (k.has('ArrowUp') || k.has('KeyZ') ? 1 : 0);
+    // Déplacement : ZQSD (les touches MARQUÉES ainsi sur le clavier) ou flèches.
+    // « w » est accepté en plus pour « haut » : sur un clavier QWERTY, c'est la
+    // touche au même endroit que le Z d'un AZERTY, et ça ne gêne personne.
+    // La touche A reste réservée au pouvoir.
+    const dx = (k.has('ArrowRight') || k.has('d') ? 1 : 0) - (k.has('ArrowLeft') || k.has('q') ? 1 : 0);
+    const dy = (k.has('ArrowDown') || k.has('s') ? 1 : 0) - (k.has('ArrowUp') || k.has('z') || k.has('w') ? 1 : 0);
     return { dx, dy };
   }
 
