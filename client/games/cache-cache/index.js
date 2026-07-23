@@ -27,12 +27,15 @@
  * ========================================================================================== */
 
 export const MAP_COUNT = 10;
-export const HIDE_DURATION_MS = 120_000;
-export const HUNT_DURATION_MS = 120_000;
+export const HIDE_DURATION_DEFAULT_MS = 180_000;
+export const HIDE_DURATION_MIN_MS = 120_000;
+export const HIDE_DURATION_MAX_MS = 300_000;
+export const HUNT_DURATION_MS = 30_000;
 export const HIT_RADIUS = 0.045;
 export const SCORE_SURVIVE = 2;
 export const SCORE_PER_HIT = 1;
 const DEFAULT_COLOR = '#f2f2f2';
+const MAX_TEXTURE_LENGTH = 220_000; // ~160 Ko décodés : large marge pour une petite texture 96x96
 
 function clamp01(n) { return Math.max(0, Math.min(1, Number(n) || 0)); }
 
@@ -87,7 +90,7 @@ export class CacheCacheEngine {
     this.hiderIds = this.players.map((p) => p.id).filter((id) => id !== this.hunterId);
     this.mapId = this.pickMap();
     this.hiderStates = Object.fromEntries(this.hiderIds.map((id) => [id, {
-      x: 0.5, y: 0.5, color: DEFAULT_COLOR, locked: false, found: false,
+      x: 0.5, y: 0.5, color: DEFAULT_COLOR, texture: null, locked: false, found: false,
     }]));
     this.bullets = 2 * this.hiderIds.length;
     this.shots = [];
@@ -108,6 +111,8 @@ export class CacheCacheEngine {
     if (typeof patch.x === 'number') st.x = clamp01(patch.x);
     if (typeof patch.y === 'number') st.y = clamp01(patch.y);
     if (typeof patch.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(patch.color)) st.color = patch.color;
+    if (patch.texture === null) st.texture = null;
+    else if (typeof patch.texture === 'string' && patch.texture.startsWith('data:image/') && patch.texture.length <= MAX_TEXTURE_LENGTH) st.texture = patch.texture;
     if (typeof patch.locked === 'boolean') st.locked = patch.locked;
     return { ok: true, state: { ...st } };
   }
@@ -238,18 +243,43 @@ function roundRectPath(ctx, x, y, w, hgt, r) {
   ctx.closePath();
 }
 
-function drawCharacter(ctx, size, x, y, color, { locked = false, found = false, dim = false } = {}) {
+/** Trace le contour du personnage (corps + tête) comme UN SEUL chemin combiné, réutilisable
+ * aussi bien pour un fill() couleur plate que pour un clip() + drawImage() (texture peinte). */
+function buildSilhouettePath(ctx, cx, cy, r) {
+  const bodyW = r * 1.7; const bodyH = r * 2.6;
+  ctx.beginPath();
+  const x = cx - bodyW / 2; const y = cy - r * 0.3; const w = bodyW; const hgt = bodyH; const rad = bodyW / 2;
+  ctx.moveTo(x + rad, y);
+  ctx.arcTo(x + w, y, x + w, y + hgt, rad);
+  ctx.arcTo(x + w, y + hgt, x, y + hgt, rad);
+  ctx.arcTo(x, y + hgt, x, y, rad);
+  ctx.arcTo(x, y, x + w, y, rad);
+  ctx.closePath();
+  ctx.moveTo(cx + r, cy - r * 1.5);
+  ctx.arc(cx, cy - r * 1.5, r, 0, Math.PI * 2);
+}
+
+function drawCharacter(ctx, size, x, y, color, { locked = false, found = false, dim = false, textureImg = null } = {}) {
   const cx = x * size; const cy = y * size;
   const r = size * 0.028;
-  const bodyW = r * 1.7; const bodyH = r * 2.6;
   ctx.save();
   ctx.globalAlpha = dim ? 0.55 : 1;
-  ctx.fillStyle = found ? 'rgba(140,140,150,0.5)' : color;
-  ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-  ctx.lineWidth = Math.max(1, size * 0.0022);
-  roundRectPath(ctx, cx - bodyW / 2, cy - r * 0.3, bodyW, bodyH, bodyW / 2);
-  ctx.fill(); ctx.stroke();
-  ctx.beginPath(); ctx.arc(cx, cy - r * 1.5, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  buildSilhouettePath(ctx, cx, cy, r);
+  if (textureImg && !found) {
+    ctx.save();
+    ctx.clip();
+    const spriteSize = r * 6.4;
+    ctx.drawImage(textureImg, cx - spriteSize / 2, cy - spriteSize * 0.62, spriteSize, spriteSize);
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.lineWidth = Math.max(1, size * 0.0022);
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = found ? 'rgba(140,140,150,0.5)' : color;
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.lineWidth = Math.max(1, size * 0.0022);
+    ctx.fill(); ctx.stroke();
+  }
   if (found) {
     ctx.strokeStyle = '#ff3d5a'; ctx.lineWidth = size * 0.006;
     ctx.beginPath(); ctx.moveTo(cx - r * 1.4, cy - r * 2.6); ctx.lineTo(cx + r * 1.4, cy + r * 0.6); ctx.stroke();
@@ -298,33 +328,6 @@ function fmtCountdown(ms) { const s = Math.max(0, Math.ceil(ms / 1000)); return 
 
 const STAGE_SIZE = 900; // résolution interne du canevas (indépendante de la taille CSS affichée)
 
-/*
- * Marges de placement d'un Cacheur.
- *
- * Un personnage occupe de la place AUTOUR de son point : la tête dépasse
- * au-dessus, le corps en dessous. Sans garde-fou, quelqu'un qui se colle au
- * bord se retrouve à moitié hors du cadre — moche, mais surtout injuste : un
- * personnage tronqué est plus difficile à repérer ET à toucher.
- *
- * Les valeurs sont dérivées des dimensions utilisées par drawCharacter(), pour
- * qu'elles restent justes si le personnage est un jour redessiné.
- * Mettre MARGES_PERSO à false rétablit le placement libre jusqu'au bord.
- */
-const MARGES_PERSO = true;
-const PERSO_R = 0.028;                       // rayon de la tête (fraction du canevas)
-const PERSO_HAUT = PERSO_R * 2.5;            // sommet de la tête au-dessus du point
-const PERSO_BAS = PERSO_R * 0.3 + PERSO_R * 2.6; // bas du corps en dessous
-const PERSO_COTE = (PERSO_R * 1.7) / 2;      // demi-largeur du corps
-
-/** Garde le personnage entièrement visible dans le cadre. */
-function poserPerso(x, y) {
-  if (!MARGES_PERSO) return { x, y };
-  return {
-    x: Math.min(1 - PERSO_COTE, Math.max(PERSO_COTE, x)),
-    y: Math.min(1 - PERSO_BAS, Math.max(PERSO_HAUT, y)),
-  };
-}
-
 class CacheCacheUI {
   constructor(container, context) {
     this.container = container;
@@ -335,6 +338,7 @@ class CacheCacheUI {
     this.chatLog = [];
     this.mode = 'deplacer';
     this.myColor = DEFAULT_COLOR;
+    this.myTexture = null;
     this.myLocked = false;
     this.otherHiders = new Map();
     this.hunterCursor = null;
@@ -347,6 +351,8 @@ class CacheCacheUI {
     this.phaseTimer = null;
     this.tickTimer = null;
     this.phaseDeadline = null;
+    this.hideDurationMs = HIDE_DURATION_DEFAULT_MS;
+    this.textureImgCache = new Map(); // dataURL -> HTMLImageElement (chargée)
   }
 
   /* ============================== CONTRAT DU MODULE ============================== */
@@ -357,12 +363,40 @@ class CacheCacheUI {
     this.container.append(this.styleEl, this.root);
     this.unsubscribe = this.ctx.onMessage(({ from, data }) => this.onMessage(from, data));
     if (this.isHost) {
-      try { this.engine = new CacheCacheEngine(this.ctx.players); }
-      catch (err) { this.renderMessage(`⚠️ ${err.message}`); return; }
-      this.beginCachePhase();
+      this.renderSetupScreen();
     } else {
       this.renderMessage('⏳ Connexion à la partie…');
     }
+  }
+
+  renderSetupScreen() {
+    let hideMinutes = HIDE_DURATION_DEFAULT_MS / 60_000;
+    const panel = h('div', { className: 'cc__panel cc__setup' });
+    const rebuild = () => {
+      panel.replaceChildren(
+        h('h2', { className: 'cc__setup-title' }, '🙈 Cache-Cache — Camouflage'),
+        h('div', { className: 'cc__setup-row' }, [
+          h('label', {}, '⏱️ Temps pour se cacher'),
+          h('div', { className: 'cc__seg' }, [2, 3, 4, 5].map((m) => h('button', {
+            type: 'button', className: `cc__segbtn${m === hideMinutes ? ' cc__segbtn--active' : ''}`,
+            onClick: () => { hideMinutes = m; rebuild(); },
+          }, `${m} min`))),
+        ]),
+        h('p', { className: 'cc__hint' }, 'Temps de chasse fixe : 30 secondes, avec 2 tirs par cacheur.'),
+        h('button', {
+          className: 'btn btn--primary cc__setup-start', type: 'button',
+          onClick: () => { this.hideDurationMs = hideMinutes * 60_000; this.startGame(); },
+        }, '▶️ Commencer'),
+      );
+    };
+    rebuild();
+    this.root.replaceChildren(h('div', { className: 'cc__setup-wrap' }, panel));
+  }
+
+  startGame() {
+    try { this.engine = new CacheCacheEngine(this.ctx.players); }
+    catch (err) { this.renderMessage(`⚠️ ${err.message}`); return; }
+    this.beginCachePhase();
   }
 
   unmount() {
@@ -405,25 +439,28 @@ class CacheCacheUI {
   beginCachePhase() {
     this.otherHiders = new Map();
     this.mapImageId = null;
-    this.broadcastViews();
     clearTimeout(this.phaseTimer);
-    this.phaseDeadline = Date.now() + HIDE_DURATION_MS;
-    this.phaseTimer = setTimeout(() => this.forceBeginHunt(), HIDE_DURATION_MS);
+    const duration = this.hideDurationMs ?? HIDE_DURATION_DEFAULT_MS;
+    this.phaseDeadline = Date.now() + duration;
+    this.phaseTimer = setTimeout(() => this.forceBeginHunt(), duration);
+    this.broadcastViews();
     this.startTicker();
   }
 
   forceBeginHunt() {
     if (!this.engine || this.engine.phase !== 'cache') return;
     this.engine.beginHunt();
-    this.broadcastViews();
     clearTimeout(this.phaseTimer);
     this.phaseDeadline = Date.now() + HUNT_DURATION_MS;
     this.phaseTimer = setTimeout(() => this.forceEndHunt(), HUNT_DURATION_MS);
+    this.broadcastViews();
   }
 
   forceEndHunt() {
     if (!this.engine || this.engine.phase !== 'chasse') return;
     this.engine.endHunt();
+    clearTimeout(this.phaseTimer);
+    this.phaseDeadline = null;
     this.broadcastViews();
     this.scheduleNextRound();
   }
@@ -462,10 +499,11 @@ class CacheCacheUI {
 
   broadcastViews() {
     for (const p of this.ctx.players) {
-      if (p.id === this.ctx.me.id) continue;
-      this.ctx.sendMessage({ t: 'view', view: this.engine.getViewFor(p.id) }, p.id);
+      const view = this.engine.getViewFor(p.id);
+      view.phaseDeadline = this.phaseDeadline;
+      if (p.id === this.ctx.me.id) { this.applyView(view); continue; }
+      this.ctx.sendMessage({ t: 'view', view }, p.id);
     }
-    this.applyView(this.engine.getViewFor(this.ctx.me.id));
   }
 
   broadcastHiderPatch(senderId, state) {
@@ -502,7 +540,7 @@ class CacheCacheUI {
       const r = this.engine.shoot(playerId, action.x, action.y);
       if (!r.ok) { this.sendErrorTo(playerId, r.error); return; }
       this.broadcastShot(r.shot);
-      if (r.roundOver) { clearTimeout(this.phaseTimer); this.broadcastViews(); this.scheduleNextRound(); }
+      if (r.roundOver) { clearTimeout(this.phaseTimer); this.phaseDeadline = null; this.broadcastViews(); this.scheduleNextRound(); }
     } else if (action.a === 'cursor') {
       this.broadcastCursor(action.x, action.y);
     } else if (action.a === 'endGameNow' && playerId === this.ctx.hostId) {
@@ -673,6 +711,7 @@ class CacheCacheUI {
     const me = view.hiders.find((p) => p.id === this.ctx.me.id);
     this.myLocked = me?.locked ?? false;
     this.myColor = me?.color ?? DEFAULT_COLOR;
+    this.myTexture = me?.texture ?? null;
     this.myPos = { x: me?.x ?? 0.5, y: me?.y ?? 0.5 };
     this.otherHiders = new Map(view.hiders.filter((p) => p.id !== this.ctx.me.id).map((p) => [p.id, p]));
 
@@ -691,6 +730,11 @@ class CacheCacheUI {
       }, '🎨 Pipette'),
       h('span', { className: 'cc__colorswatch', style: `background:${this.myColor};`, title: 'Ta couleur actuelle' }),
       h('button', {
+        type: 'button', className: 'cc__toolbtn cc__toolbtn--draw', disabled: !this.baseCanvas,
+        title: this.baseCanvas ? '' : 'Chargement de la carte…',
+        onClick: () => this.openDrawingModal(),
+      }, '🖌️ Dessiner'),
+      h('button', {
         type: 'button', className: `cc__toolbtn cc__toolbtn--lock${this.myLocked ? ' cc__toolbtn--active' : ''}`,
         onClick: () => this.toggleLock(),
       }, this.myLocked ? '🔒 Verrouillé·e' : '🔓 Verrouiller'),
@@ -698,9 +742,13 @@ class CacheCacheUI {
 
     const main = h('div', { className: 'cc__stagewrap' }, [toolbar, this.stageCanvas]);
     this.renderShell(main, {
-      subtitle: this.myLocked ? 'Position verrouillée — tu peux quand même changer de couleur.' : 'Place-toi et peins-toi pour te fondre dans le décor.',
+      subtitle: this.myLocked ? 'Position verrouillée — tu peux quand même changer de couleur.' : 'Place-toi, peins-toi, ou ouvre "Dessiner" pour un camouflage détaillé.',
     });
-    this.loadMapAndDraw(view.mapId, () => this.redrawHideStage());
+    this.loadMapAndDraw(view.mapId, () => {
+      this.redrawHideStage();
+      const drawBtn = this.root.querySelector('.cc__toolbtn--draw');
+      if (drawBtn) { drawBtn.removeAttribute('disabled'); drawBtn.title = ''; }
+    });
   }
 
   /** Bascule locale (mode outil / verrou) : met à jour uniquement les boutons concernés et
@@ -722,6 +770,147 @@ class CacheCacheUI {
     this.setStatus(next ? 'Position verrouillée.' : 'Position déverrouillée.');
   }
 
+  /* ============================== PAGE DE DESSIN (camouflage détaillé) ============================== */
+
+  drawZoomedBackground(ctx, modalSize, cx, cy, cropFrac) {
+    if (!this.baseCanvas) return;
+    const cropSize = STAGE_SIZE * cropFrac;
+    const sx = Math.max(0, Math.min(STAGE_SIZE - cropSize, cx * STAGE_SIZE - cropSize / 2));
+    const sy = Math.max(0, Math.min(STAGE_SIZE - cropSize, cy * STAGE_SIZE - cropSize / 2));
+    ctx.drawImage(this.baseCanvas, sx, sy, cropSize, cropSize, 0, 0, modalSize, modalSize);
+  }
+
+  /** Ouvre la page de dessin : vue zoomée du décor autour du personnage + calque peignable
+   * masqué à sa silhouette (même principe qu'un outil de dessin façon Dessin & Devine : pinceau,
+   * couleur, taille, effacer — appliqué ici directement sur la forme du personnage). */
+  openDrawingModal() {
+    if (!this.baseCanvas) { this.setStatus('Carte pas encore chargée, réessaie dans un instant.'); return; }
+    const MODAL_SIZE = 380;
+    const bgCanvas = h('canvas', { className: 'cc__draw-bg', width: String(MODAL_SIZE), height: String(MODAL_SIZE) });
+    const fgCanvas = h('canvas', { className: 'cc__draw-fg', width: String(MODAL_SIZE), height: String(MODAL_SIZE) });
+    const bgCtx = bgCanvas.getContext('2d');
+    const fgCtx = fgCanvas.getContext('2d');
+    this.drawZoomedBackground(bgCtx, MODAL_SIZE, this.myPos.x, this.myPos.y, 0.14);
+
+    const r = MODAL_SIZE * 0.16;
+    const ccx = MODAL_SIZE / 2; const ccy = MODAL_SIZE / 2;
+    const paintSilhouette = () => {
+      buildSilhouettePath(fgCtx, ccx, ccy, r);
+      fgCtx.save();
+      fgCtx.clip();
+      const existing = this.getTextureImage(this.myTexture, null);
+      if (existing) {
+        const spriteSize = r * 6.4;
+        fgCtx.drawImage(existing, ccx - spriteSize / 2, ccy - spriteSize * 0.62, spriteSize, spriteSize);
+      } else {
+        fgCtx.fillStyle = this.myColor;
+        fgCtx.fillRect(0, 0, MODAL_SIZE, MODAL_SIZE);
+      }
+      fgCtx.restore();
+      buildSilhouettePath(fgCtx, ccx, ccy, r);
+      fgCtx.strokeStyle = 'rgba(0,0,0,.5)'; fgCtx.lineWidth = 2; fgCtx.stroke();
+    };
+    paintSilhouette();
+
+    let brushColor = this.myColor;
+    let brushSize = 16;
+    let pipetteActive = false;
+    let drawing = false;
+    let lastPt = null;
+
+    const toXY = (canvas, e) => {
+      const rect = canvas.getBoundingClientRect();
+      const w = rect.width || MODAL_SIZE; const hh = rect.height || MODAL_SIZE;
+      return { x: ((e.clientX - rect.left) / w) * MODAL_SIZE, y: ((e.clientY - rect.top) / hh) * MODAL_SIZE };
+    };
+
+    const strokeTo = (a, b) => {
+      fgCtx.save();
+      fgCtx.globalCompositeOperation = 'source-atop';
+      fgCtx.strokeStyle = brushColor; fgCtx.fillStyle = brushColor;
+      fgCtx.lineWidth = brushSize; fgCtx.lineCap = 'round'; fgCtx.lineJoin = 'round';
+      if (a) { fgCtx.beginPath(); fgCtx.moveTo(a.x, a.y); fgCtx.lineTo(b.x, b.y); fgCtx.stroke(); }
+      fgCtx.beginPath(); fgCtx.arc(b.x, b.y, brushSize / 2, 0, Math.PI * 2); fgCtx.fill();
+      fgCtx.restore();
+    };
+
+    const colorInput = h('input', {
+      type: 'color', value: brushColor, className: 'cc__draw-colorinput',
+      oninput: (e) => { brushColor = e.target.value; pipetteActive = false; pipetteBtn.classList.remove('cc__toolbtn--active'); },
+    });
+    const pipetteBtn = h('button', {
+      type: 'button', className: 'cc__toolbtn', title: 'Échantillonner une couleur du décor visible ci-dessus',
+      onClick: () => { pipetteActive = !pipetteActive; pipetteBtn.classList.toggle('cc__toolbtn--active', pipetteActive); },
+    }, '🎨 Pipette (décor)');
+    const sizeInput = h('input', {
+      type: 'range', min: '4', max: '36', value: String(brushSize),
+      oninput: (e) => { brushSize = Number(e.target.value); },
+    });
+
+    const samplePick = (e) => {
+      const p = toXY(bgCanvas, e);
+      try {
+        const px = Math.max(0, Math.min(MODAL_SIZE - 1, Math.floor(p.x)));
+        const py = Math.max(0, Math.min(MODAL_SIZE - 1, Math.floor(p.y)));
+        const d = bgCtx.getImageData(px, py, 1, 1).data;
+        brushColor = `#${[d[0], d[1], d[2]].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+        colorInput.value = brushColor;
+      } catch { /* échantillon hors-cadre : ignoré */ }
+    };
+
+    fgCanvas.addEventListener('pointerdown', (e) => {
+      if (pipetteActive) { samplePick(e); return; }
+      drawing = true;
+      lastPt = toXY(fgCanvas, e);
+      strokeTo(null, lastPt);
+    });
+    fgCanvas.addEventListener('pointermove', (e) => {
+      if (!drawing || pipetteActive) return;
+      const p = toXY(fgCanvas, e);
+      strokeTo(lastPt, p);
+      lastPt = p;
+    });
+    const stopDrawing = () => { drawing = false; lastPt = null; };
+    fgCanvas.addEventListener('pointerup', stopDrawing);
+    fgCanvas.addEventListener('pointerleave', stopDrawing);
+    bgCanvas.addEventListener('click', (e) => { if (pipetteActive) samplePick(e); });
+
+    const clearBtn = h('button', {
+      type: 'button', className: 'btn btn--ghost btn--small',
+      onClick: () => { fgCtx.clearRect(0, 0, MODAL_SIZE, MODAL_SIZE); buildSilhouettePath(fgCtx, ccx, ccy, r); fgCtx.save(); fgCtx.clip(); fgCtx.fillStyle = this.myColor; fgCtx.fillRect(0, 0, MODAL_SIZE, MODAL_SIZE); fgCtx.restore(); },
+    }, '🗑️ Effacer');
+    const cancelBtn = h('button', { type: 'button', className: 'btn btn--ghost', onClick: () => overlay.remove() }, '✖️ Annuler');
+    const validateBtn = h('button', {
+      type: 'button', className: 'btn btn--primary',
+      onClick: () => {
+        const small = document.createElement('canvas');
+        small.width = 110; small.height = 110;
+        small.getContext('2d').drawImage(fgCanvas, 0, 0, 110, 110);
+        const dataUrl = small.toDataURL('image/png');
+        this.myTexture = dataUrl;
+        this.act({ a: 'updateHiderState', patch: { texture: dataUrl } });
+        overlay.remove();
+        this.redrawHideStage();
+        const swatch = this.root.querySelector('.cc__colorswatch');
+        if (swatch) swatch.style.cssText = `background:center/cover no-repeat url(${dataUrl});`;
+      },
+    }, '✅ Valider');
+
+    const overlay = h('div', { className: 'cc__modal-overlay' }, h('div', { className: 'cc__modal cc__draw-modal' }, [
+      h('h3', {}, '🖌️ Dessine ton camouflage'),
+      h('p', { className: 'cc__hint' }, 'Le fond montre le décor autour de toi : dessine directement sur ton personnage pour t\'y fondre.'),
+      h('div', { className: 'cc__draw-stage', style: `width:${MODAL_SIZE}px;height:${MODAL_SIZE}px;` }, [bgCanvas, fgCanvas]),
+      h('div', { className: 'cc__draw-tools' }, [
+        colorInput, pipetteBtn,
+        h('label', { className: 'cc__draw-sizelabel' }, ['Taille', sizeInput]),
+        clearBtn,
+      ]),
+      h('div', { className: 'cc__draw-actions' }, [cancelBtn, validateBtn]),
+    ]));
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    this.root.append(overlay);
+  }
+
   onHideStageClick(e) {
     const { x, y } = this.pointerToNormalized(e, this.stageCanvas);
     if (this.mode === 'pipette') {
@@ -736,9 +925,7 @@ class CacheCacheUI {
       return;
     }
     if (this.myLocked) { this.setStatus('Déverrouille pour te déplacer.'); return; }
-    // Bornage au placement seulement : le tir et le viseur du Chasseur, eux,
-    // doivent rester libres jusqu'aux bords.
-    this.myPos = poserPerso(x, y);
+    this.myPos = { x, y };
     this.throttledSendMove(x, y);
     this.redrawHideStage();
   }
@@ -846,13 +1033,32 @@ class CacheCacheUI {
     return { x: clamp01((e.clientX - rect.left) / rect.width), y: clamp01((e.clientY - rect.top) / rect.height) };
   }
 
+  /** Charge (et met en cache) l'image d'une texture peinte à partir de son data URL.
+   * Chargement asynchrone : redessine automatiquement une fois prête. */
+  getTextureImage(dataUrl, onReady) {
+    if (!dataUrl) return null;
+    const cached = this.textureImgCache.get(dataUrl);
+    if (cached === 'error') return null;
+    if (cached instanceof Image) return cached.complete ? cached : null;
+    const img = new Image();
+    this.textureImgCache.set(dataUrl, img);
+    img.onload = () => onReady?.();
+    img.onerror = () => this.textureImgCache.set(dataUrl, 'error');
+    img.src = dataUrl;
+    return null;
+  }
+
   redrawHideStage() {
     if (!this.stageCtx || !this.baseCanvas) return;
     const ctx = this.stageCtx;
     ctx.clearRect(0, 0, STAGE_SIZE, STAGE_SIZE);
     ctx.drawImage(this.baseCanvas, 0, 0);
-    for (const p of this.otherHiders.values()) drawCharacter(ctx, STAGE_SIZE, p.x, p.y, p.color, { locked: p.locked, dim: true });
-    drawCharacter(ctx, STAGE_SIZE, this.myPos.x, this.myPos.y, this.myColor, { locked: this.myLocked });
+    for (const p of this.otherHiders.values()) {
+      const textureImg = this.getTextureImage(p.texture, () => this.redrawHideStage());
+      drawCharacter(ctx, STAGE_SIZE, p.x, p.y, p.color, { locked: p.locked, dim: true, textureImg });
+    }
+    const myTextureImg = this.getTextureImage(this.myTexture, () => this.redrawHideStage());
+    drawCharacter(ctx, STAGE_SIZE, this.myPos.x, this.myPos.y, this.myColor, { locked: this.myLocked, textureImg: myTextureImg });
   }
 
   redrawHuntStage() {
@@ -860,7 +1066,10 @@ class CacheCacheUI {
     const ctx = this.stageCtx;
     ctx.clearRect(0, 0, STAGE_SIZE, STAGE_SIZE);
     ctx.drawImage(this.baseCanvas, 0, 0);
-    for (const p of this.huntHiders.values()) drawCharacter(ctx, STAGE_SIZE, p.x, p.y, p.color, { found: p.found });
+    for (const p of this.huntHiders.values()) {
+      const textureImg = this.getTextureImage(p.texture, () => this.redrawHuntStage());
+      drawCharacter(ctx, STAGE_SIZE, p.x, p.y, p.color, { found: p.found, textureImg });
+    }
     for (const s of this.huntShots) drawSplat(ctx, STAGE_SIZE, s.x, s.y, s.hit);
     if (this.hunterCursor && this.view && !this.view.isHunter) drawCrosshair(ctx, STAGE_SIZE, this.hunterCursor.x, this.hunterCursor.y);
   }
@@ -879,6 +1088,16 @@ const CSS = `
 .cc .tag--ok{ background:rgba(41,211,194,.18); color:var(--accent-2,#29d3c2); }
 .cc .tag--bad{ background:rgba(255,61,90,.18); color:#ff5c7a; }
 
+.cc__setup-wrap{ flex:1; display:flex; align-items:center; justify-content:center; padding:16px; }
+.cc__setup{ width:min(460px,100%); margin:auto; padding:24px; gap:16px; }
+.cc__setup-title{ margin:0; font-size:1.25rem; }
+.cc__setup-row{ display:flex; flex-direction:column; gap:8px; }
+.cc__setup-row label{ font-size:.78rem; text-transform:uppercase; letter-spacing:.05em; color:var(--text-faint,#616880); font-weight:700; }
+.cc__seg{ display:flex; gap:6px; flex-wrap:wrap; }
+.cc__segbtn{ padding:8px 12px; border-radius:999px; border:1px solid var(--glass-border,rgba(255,255,255,.14)); background:rgba(255,255,255,.04); color:var(--text,#e8ecff); font-size:.82rem; font-weight:600; }
+.cc__segbtn--active{ background:linear-gradient(135deg,var(--accent-2,#29d3c2),var(--accent,#7c5cff)); color:#0b0b12; border-color:transparent; }
+.cc__setup-start{ align-self:flex-end; margin-top:4px; }
+
 .cc__header{ display:flex; align-items:center; justify-content:space-between; }
 .cc__title{ font-weight:700; display:flex; align-items:center; gap:10px; }
 .cc__subtitle{ font-weight:400; font-size:.8rem; color:var(--text-dim,#aab); }
@@ -895,18 +1114,11 @@ const CSS = `
 .cc__toolbar{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:center; }
 .cc__toolbtn{ padding:7px 12px; border-radius:999px; border:1px solid var(--glass-border,rgba(255,255,255,.14)); background:rgba(255,255,255,.04); color:var(--text,#e8ecff); font-size:.8rem; font-weight:600; }
 .cc__toolbtn--active{ background:linear-gradient(135deg,var(--accent-2,#29d3c2),var(--accent,#7c5cff)); color:#0b0b12; border-color:transparent; }
+.cc__toolbtn:disabled{ opacity:.4; cursor:not-allowed; }
 .cc__colorswatch{ width:26px; height:26px; border-radius:50%; border:2px solid rgba(255,255,255,.5); box-shadow:0 0 0 1px rgba(0,0,0,.4); }
 .cc__bullets{ font-weight:700; font-size:.85rem; }
 .cc__hint{ font-size:.78rem; color:var(--text-dim,#aab); text-align:center; }
-/* Le canevas contient une image CARRÉE (900x900). Sa boîte doit donc rester
-   carrée, sinon le navigateur étire le contenu : personnages aplatis et
-   apparemment décalés vers le haut.
-   Piège corrigé : « aspect-ratio:1/1 » avec « max-height:64vh » se
-   contredisent — le ratio veut une hauteur égale à la largeur, le max-height
-   la rabote (écrasement de 23 % sur un portable 1366x768, 40 % sur une fenêtre
-   basse). La limite de hauteur est donc intégrée À LA LARGEUR : le carré est
-   alors toujours respecté, quelle que soit la fenêtre. */
-.cc__stage{ width:min(640px,100%,64vh); aspect-ratio:1/1; border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,.4); cursor:crosshair; background:#111; }
+.cc__stage{ width:min(640px,100%); aspect-ratio:1/1; max-height:64vh; border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,.4); cursor:crosshair; background:#111; }
 
 .cc__blackout{ flex:1; display:flex; align-items:center; justify-content:center; width:100%; min-height:280px; background:#05050a; border-radius:14px; }
 .cc__blackout-inner{ text-align:center; display:flex; flex-direction:column; align-items:center; gap:6px; padding:24px; }
@@ -937,6 +1149,18 @@ const CSS = `
 .cc__chat-msg__text{ margin:1px 0 0; font-size:.85rem; color:var(--text-dim,#aab); overflow-wrap:anywhere; }
 .cc__chat-form{ display:flex; gap:8px; }
 .cc__chat-form input{ flex:1; min-width:0; padding:8px 10px; font:inherit; font-size:.85rem; color:var(--text,#e8ecff); background:rgba(0,0,0,.35); border:1px solid var(--glass-border,rgba(255,255,255,.12)); border-radius:var(--radius-s,10px); }
+
+.cc__modal-overlay{ position:fixed; inset:0; background:rgba(6,6,12,.72); display:flex; align-items:center; justify-content:center; z-index:20; padding:16px; }
+.cc__modal{ background:#15151f; border:1px solid var(--glass-border,rgba(255,255,255,.14)); border-radius:var(--radius-m,14px); padding:18px; text-align:center; max-width:94vw; }
+.cc__modal h3{ margin:0 0 6px; }
+.cc__draw-modal{ display:flex; flex-direction:column; gap:12px; align-items:center; }
+.cc__draw-stage{ position:relative; border-radius:12px; overflow:hidden; box-shadow:0 10px 30px rgba(0,0,0,.5); }
+.cc__draw-bg, .cc__draw-fg{ position:absolute; inset:0; width:100%; height:100%; }
+.cc__draw-fg{ cursor:crosshair; touch-action:none; }
+.cc__draw-tools{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center; }
+.cc__draw-colorinput{ width:36px; height:36px; padding:0; border:none; border-radius:8px; background:none; cursor:pointer; }
+.cc__draw-sizelabel{ display:flex; align-items:center; gap:6px; font-size:.78rem; color:var(--text-dim,#aab); }
+.cc__draw-actions{ display:flex; gap:10px; }
 
 @media (max-width:1000px){
   .cc__layout{ grid-template-columns:1fr; }
