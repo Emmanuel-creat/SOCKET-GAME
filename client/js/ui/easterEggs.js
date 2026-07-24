@@ -12,10 +12,12 @@
  * Les deux bascules sont mémorisées dans le navigateur : elles survivent au
  * rechargement, et refaire le code les désactive.
  *
- * Ce module est autonome : il ne dépend d'aucun autre, et tout ce qu'il ajoute
+ * Ce module s'appuie seulement sur le bus d'événements, et tout ce qu'il ajoute
  * à la page vit HORS de la grille de mise en page (leçon du menu mobile : un
  * enfant inattendu d'une grille en devient une cellule).
  */
+
+import { bus } from '../core/EventBus.js';
 
 const INACTIVITE_MS = 30_000;      // avant que le logo ne parte en vadrouille
 const VITESSE_DVD = 0.12;          // en fraction de la largeur par seconde
@@ -273,7 +275,67 @@ function initModePatate() {
 /* ------------------------------------------------------------------ */
 
 /* ------------------------------------------------------------------ */
-/* 4. Curseurs — 10 clics sur le titre                                 */
+/* 4. Pop-up surprise du chat de Pause Café                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Déclenchée par un MESSAGE du chat, pas par la frappe : tout le monde reçoit
+ * le message, donc tout le monde voit la pop-up en même temps — c'est là que
+ * réside la blague. Aucun ajout côté serveur n'est nécessaire.
+ */
+const MOTS_POPUP = /\b(femboys?|gays?)\b/i;
+const POPUP_IMAGE = '/assets/pub-femboy.jpg';
+let popupOuverte = false;
+
+function ouvrirPopup() {
+  if (popupOuverte) return;      // un seul exemplaire, même si le mot revient
+  popupOuverte = true;
+
+  const fermer = () => {
+    voile.remove();
+    document.removeEventListener('keydown', surEchap);
+    popupOuverte = false;
+  };
+  const surEchap = (e) => { if (e.key === 'Escape') fermer(); };
+
+  const image = document.createElement('img');
+  image.src = POPUP_IMAGE;
+  image.alt = '';
+  image.className = 'pub-popup__image';
+
+  const titre = document.createElement('div');
+  titre.className = 'pub-popup__titre';
+  titre.textContent = 'Les femboys les plus chauds de ta région t\u2019attendent avec impatience';
+
+  const croix = document.createElement('button');
+  croix.className = 'pub-popup__fermer';
+  croix.type = 'button';
+  croix.setAttribute('aria-label', 'Fermer');
+  croix.textContent = '✕';
+  croix.addEventListener('click', fermer);
+
+  const carte = document.createElement('div');
+  carte.className = 'pub-popup';
+  carte.append(croix, titre, image);
+
+  const voile = document.createElement('div');
+  voile.className = 'pub-popup__voile';
+  voile.append(carte);
+  // Clic à côté = on ferme ; clic sur la carte = on ne ferme pas.
+  voile.addEventListener('click', (e) => { if (e.target === voile) fermer(); });
+  document.addEventListener('keydown', surEchap);
+
+  document.body.append(voile);   // hors de la grille de mise en page
+}
+
+function initPopupChat() {
+  bus.on('lounge:newMessage', (message) => {
+    if (MOTS_POPUP.test(String(message?.text ?? ''))) ouvrirPopup();
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* 5. Curseurs — 10 clics sur le titre                                 */
 /* ------------------------------------------------------------------ */
 
 function initCurseurs() {
@@ -317,4 +379,5 @@ export function initEasterEggs() {
   initKonami();
   initModePatate();
   initCurseurs();
+  initPopupChat();
 }

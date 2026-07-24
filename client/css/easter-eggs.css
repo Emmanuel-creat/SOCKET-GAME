@@ -155,3 +155,91 @@
 
 /* Le titre reste un clin d'œil discret : rien ne signale qu'il est cliquable. */
 .sidebar__logo-text { user-select: none; }
+
+/* --------------------------------------------------------------------------
+   6. Pop-up surprise du chat de Pause Café
+
+   Volontairement dans l'esprit des pop-ups publicitaires des années 2000 :
+   cadre criard, titre qui clignote doucement, image en grand. Elle occupe une
+   large part de l'écran mais reste toujours entièrement visible, y compris sur
+   téléphone.
+   -------------------------------------------------------------------------- */
+
+.pub-popup__voile {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;                 /* au-dessus de tout, y compris les fenêtres de jeu */
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(4, 4, 10, 0.78);
+  backdrop-filter: blur(3px);
+  animation: pub-voile-in 0.18s ease;
+}
+
+@keyframes pub-voile-in { from { opacity: 0; } to { opacity: 1; } }
+
+.pub-popup {
+  position: relative;
+  width: min(760px, 96vw);
+  max-height: 92vh;              /* jamais plus haute que l'écran : rien n'est coupé */
+  overflow: auto;
+  padding: 18px 18px 14px;
+  border-radius: 18px;
+  background: linear-gradient(160deg, #ff5fa2 0%, #b043d6 55%, #6a2fc9 100%);
+  border: 4px solid #ffe27a;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.65), 0 0 0 2px rgba(255, 255, 255, 0.15) inset;
+  text-align: center;
+  animation: pub-popup-in 0.34s cubic-bezier(0.22, 1.4, 0.4, 1);
+}
+
+@keyframes pub-popup-in {
+  from { opacity: 0; transform: scale(0.86) rotate(-1.5deg); }
+  to { opacity: 1; transform: scale(1) rotate(0); }
+}
+
+.pub-popup__titre {
+  font-size: clamp(1.05rem, 3.4vw, 1.7rem);
+  font-weight: 900;
+  line-height: 1.2;
+  color: #fff;
+  text-shadow: 0 2px 0 #8a1f5e, 0 0 18px rgba(255, 226, 122, 0.6);
+  margin: 4px 34px 14px;
+  animation: pub-titre-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pub-titre-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.035); }
+}
+
+.pub-popup__image {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 12px;
+  border: 3px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+.pub-popup__fermer {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.7);
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.pub-popup__fermer:hover { background: rgba(0, 0, 0, 0.6); }
+
+@media (prefers-reduced-motion: reduce) {
+  .pub-popup, .pub-popup__titre { animation: none; }
+}
