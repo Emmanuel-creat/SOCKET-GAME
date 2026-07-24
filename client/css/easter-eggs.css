@@ -138,3 +138,20 @@
   .mode-patate .lounge-roster__avatar,
   .mode-patate #sidebar-user-avatar { animation: none; }
 }
+
+/* --------------------------------------------------------------------------
+   5. Curseurs maison (10 clics sur le titre)
+
+   Le curseur est posé sur la racine, mais quantité d'éléments définissent le
+   leur (boutons en « pointer », champs en « text »…) et masqueraient le skin.
+   On le fait donc redescendre partout — SAUF sur les canevas de jeu, où la
+   croix de visée est un outil, pas une décoration.
+   -------------------------------------------------------------------------- */
+
+.curseur-perso,
+.curseur-perso *:not(canvas):not(.cc__stage) {
+  cursor: inherit !important;
+}
+
+/* Le titre reste un clin d'œil discret : rien ne signale qu'il est cliquable. */
+.sidebar__logo-text { user-select: none; }
