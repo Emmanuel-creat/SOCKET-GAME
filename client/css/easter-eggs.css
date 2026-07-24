@@ -1,0 +1,140 @@
+/* ==========================================================================
+   Easter eggs — logo rebondissant, thème bio-médical, mode patate.
+
+   Feuille SÉPARÉE volontairement : ces styles n'ont aucune raison de vivre
+   dans base.css ou views.css, qui évoluent de leur côté. Les ajouter ici
+   évite de réécrire un fichier partagé — et donc d'écraser par mégarde ce qui
+   y a été ajouté entre-temps.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Logo rebondissant (mode DVD)
+   -------------------------------------------------------------------------- */
+
+.dvd-logo {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 128px;
+  height: 128px;
+  z-index: 900;             /* au-dessus de l'interface, sous les fenêtres modales */
+  pointer-events: none;     /* ne gêne jamais un clic */
+  user-select: none;
+  will-change: transform, filter;
+  opacity: 0;
+  animation: dvd-apparition 0.8s ease forwards;
+  filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.55));
+}
+
+@keyframes dvd-apparition {
+  from { opacity: 0; transform: scale(0.85); }
+  to { opacity: 0.92; }
+}
+
+/* Sur petit écran, une pastille plus discrète. */
+@media (max-width: 600px) {
+  .dvd-logo { width: 88px; height: 88px; }
+}
+
+/* Personne ne veut d'un logo qui bouge s'il a demandé moins d'animations. */
+@media (prefers-reduced-motion: reduce) {
+  .dvd-logo { display: none; }
+}
+
+/* --------------------------------------------------------------------------
+   2. Bulle d'annonce (déblocage d'un secret)
+   -------------------------------------------------------------------------- */
+
+.egg-bulle {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  z-index: 1200;
+  padding: 12px 20px;
+  border-radius: 999px;
+  background: rgba(10, 12, 20, 0.92);
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.16));
+  color: var(--text, #e8ecff);
+  font-size: 0.9rem;
+  font-weight: 600;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
+  animation: egg-bulle-in 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+}
+
+@keyframes egg-bulle-in {
+  from { opacity: 0; transform: translate(-50%, 14px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* --------------------------------------------------------------------------
+   3. Thème bio-médical (Konami)
+
+   On ne redéfinit QUE les jetons de couleur : tout le reste de l'interface
+   s'y adapte tout seul, puisque les composants ne lisent que ces variables.
+   Ambiance salle d'analyse : vert menthe, cyan, fond bleu-vert profond.
+   -------------------------------------------------------------------------- */
+
+.theme-bio {
+  --bg-deep: #061412;
+  --glass: rgba(120, 255, 214, 0.05);
+  --glass-strong: rgba(120, 255, 214, 0.09);
+  --glass-border: rgba(120, 255, 214, 0.18);
+
+  --accent: #29d3a2;
+  --accent-2: #56e0ff;
+  --accent-gradient: linear-gradient(120deg, #29d3a2 0%, #56e0ff 100%);
+  --success: #4ee6a8;
+  --warning: #ffd166;
+  --danger: #ff6b81;
+}
+
+/* Fond : dégradé façon écran de monitoring, plus une trame très discrète de
+   lignes horizontales évoquant un tracé. */
+.theme-bio body {
+  background:
+    radial-gradient(1100px 700px at 78% -8%, rgba(41, 211, 162, 0.16), transparent 60%),
+    radial-gradient(900px 640px at 8% 108%, rgba(86, 224, 255, 0.13), transparent 60%),
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0 3px,
+      rgba(120, 255, 214, 0.022) 3px 4px
+    ),
+    var(--bg-deep);
+}
+
+/* Le titre devenu DUMBGAME mérite un traitement à part. */
+.theme-bio .sidebar__logo-text {
+  background: linear-gradient(100deg, #56e0ff, #29d3a2 60%, #a8ffe4);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  letter-spacing: 0.02em;
+}
+
+/* --------------------------------------------------------------------------
+   4. Mode patate — les avatars sont remplacés côté JS ; ici, juste un
+      soupçon de vie pour que le clin d'œil se voie.
+   -------------------------------------------------------------------------- */
+
+.mode-patate .player-row__avatar,
+.mode-patate .chat-msg__avatar,
+.mode-patate .lounge-roster__avatar,
+.mode-patate #sidebar-user-avatar {
+  animation: patate-dodeline 3.6s ease-in-out infinite;
+  transform-origin: 50% 80%;
+  display: inline-block;
+}
+
+@keyframes patate-dodeline {
+  0%, 100% { transform: rotate(-5deg); }
+  50% { transform: rotate(5deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mode-patate .player-row__avatar,
+  .mode-patate .chat-msg__avatar,
+  .mode-patate .lounge-roster__avatar,
+  .mode-patate #sidebar-user-avatar { animation: none; }
+}

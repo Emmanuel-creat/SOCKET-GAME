@@ -72,7 +72,7 @@ export class LoungeView {
     this.rosterEl.replaceChildren(
       ...(roster.length
         ? roster.map((p) => el('div', { className: 'lounge-roster__item' }, [
-            el('span', { 'aria-hidden': 'true' }, [p.avatar]),
+            el('span', { className: 'lounge-roster__avatar', 'aria-hidden': 'true' }, [p.avatar]),
             el('span', { style: { color: p.color } }, [p.pseudo, p.id === me?.id ? ' (vous)' : '']),
           ]))
         : [el('p', { style: { opacity: '.6', fontSize: '.85rem' } }, ['Personne pour le moment.'])]),

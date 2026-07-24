@@ -19,6 +19,7 @@ import { LoungeView } from './views/LoungeView.js';
 import { RoomView } from './views/RoomView.js';
 import { GameView } from './views/GameView.js';
 import { LABELS } from '/shared/constants.js';
+import { initEasterEggs } from './ui/easterEggs.js';
 
 // --- Menu mobile (escamotable ≤ 820 px ; sans effet sur grand écran) ---
 initSidebarMobile();
@@ -39,6 +40,9 @@ new ClassementView({ socket });
 new LoungeView({ socket });
 new RoomView({ socket });
 new GameView({ socket });
+
+// Secrets maison : logo rebondissant, Konami, mode patate.
+initEasterEggs();
 
 // --- Sidebar : modales ---
 const modalOpeners = {
