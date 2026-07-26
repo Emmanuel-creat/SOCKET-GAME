@@ -336,7 +336,7 @@
       "nom": "Spring Clash",
       "description": "Un cube et un ressort : ce n’est pas notre projet de voiture, c’est un jeu.",
       "icone": "🟦",
-      "image": "/games/spring-clash/assets/cover.png",
+      "image": "/games/spring-clash/assets/cover.jpg",
       "joueursMin": 2,
       "joueursMax": 8,
       "etat": "disponible",
