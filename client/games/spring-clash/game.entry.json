@@ -1,0 +1,15 @@
+{
+  "id": "spring-clash",
+  "nom": "Spring Clash",
+  "description": "Un cube, un ressort, aucune arme. Comprime, détends, éjecte — et apprends à contrer au bon moment.",
+  "icone": "🟦",
+  "image": "/games/placeholder01/assets/cover.png",
+  "joueursMin": 2,
+  "joueursMax": 8,
+  "etat": "disponible",
+  "version": "1.0.0",
+  "auteur": "Manu",
+  "module": "index.js",
+  "chemin": "/games/spring-clash/",
+  "visible": true
+}
