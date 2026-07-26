@@ -35,12 +35,30 @@ function h(tag, props = {}, enfants = []) {
 }
 
 const COULEURS = ['#4fc3f7', '#ff6b6b', '#66d17a', '#ffd166', '#c56cf0', '#ff9f43', '#2fe0d0', '#ff6fa5'];
-const TEINTES_SOL = {
-  herbe: '#2f6b3a', glace: '#8fd3f4', sable: '#d8c07a',
-  caoutchouc: '#8b5fbf', metal: '#5a6472', lave: '#d8412f',
+/*
+ * Palettes de terrain. Chaque sol a un ton de base, deux nuances pour le grain,
+ * une teinte claire pour le liseré supérieur et une sombre pour l'ombre portée
+ * du bord : c'est ce jeu de quatre tons qui donne le relief des tilesets
+ * classiques, bien plus qu'un aplat de couleur.
+ */
+const PALETTES = {
+  herbe:      { base: '#4a8f3c', grain1: '#3d7a31', grain2: '#57a344', clair: '#6dbb52', ombre: '#2c5a24' },
+  glace:      { base: '#7fc4e8', grain1: '#6db3da', grain2: '#9ad8f3', clair: '#c6ecfb', ombre: '#4a8bb0' },
+  sable:      { base: '#d8b978', grain1: '#c9a765', grain2: '#e5cb8e', clair: '#f2dfae', ombre: '#a8874a' },
+  caoutchouc: { base: '#7d52b0', grain1: '#6b4399', grain2: '#9265c7', clair: '#ab84dc', ombre: '#4d2f70' },
+  metal:      { base: '#6b7585', grain1: '#5b6472', grain2: '#7d8798', clair: '#98a2b2', ombre: '#414957' },
+  lave:       { base: '#c9391f', grain1: '#a82a15', grain2: '#e05a2c', clair: '#ffa23d', ombre: '#7d1c0d' },
 };
 
-class SpringClashUI {
+/** Générateur déterministe : la même case donne toujours le même décor. */
+function alea(x, y, sel = 0) {
+  let n = (x * 73856093) ^ (y * 19349663) ^ (sel * 83492791);
+  n = (n ^ (n >>> 13)) >>> 0;
+  n = Math.imul(n, 1274126177) >>> 0;
+  return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
+}
+
+export class SpringClashUI {
   constructor(container, context) {
     this.conteneur = container;
     this.ctx = context;
@@ -268,6 +286,187 @@ class SpringClashUI {
     this.raf = requestAnimationFrame(dessiner);
   }
 
+
+  /* ============================== décor ============================== */
+
+  /**
+   * Peint le terrain UNE SEULE FOIS dans un canevas hors écran, et le réutilise
+   * ensuite à chaque image. Sans ça, on redessinerait des centaines de motifs
+   * et de brins d'herbe 40 fois par seconde pour un décor qui ne bouge pas.
+   * Le cache est refait quand le terrain change (événement) ou qu'on
+   * redimensionne.
+   */
+  calqueDecor(v, T, echelle) {
+    const cle = `${v.solsVersion ?? 0}|${v.manche}|${Math.round(T)}`;
+    if (this._decor && this._decorCle === cle) return this._decor;
+
+    const c = document.createElement('canvas');
+    c.width = T; c.height = T;
+    const g = c.getContext('2d');
+    const centre = Math.floor(v.grilleTaille / 2);
+    const pas = TUILE * echelle;
+    const versEcran = (x, y) => [T / 2 + x * echelle, T / 2 + y * echelle];
+    const solA = (lx, ly) => (v.sols[ly]?.[lx] ?? null);
+
+    // 1. Aplats + grain : deux passes de taches semées, toujours identiques
+    //    pour une case donnée, ce qui évite le fourmillement d'une image à
+    //    l'autre tout en cassant l'uniformité.
+    for (let ly = 0; ly < v.grilleTaille; ly += 1) {
+      for (let lx = 0; lx < v.grilleTaille; lx += 1) {
+        const sol = solA(lx, ly);
+        const p = PALETTES[sol] ?? PALETTES.herbe;
+        const [px, py] = versEcran((lx - centre) * TUILE - TUILE / 2, (ly - centre) * TUILE - TUILE / 2);
+        g.fillStyle = p.base;
+        g.fillRect(px, py, pas + 1, pas + 1);
+        this.grain(g, px, py, pas, lx, ly, p, sol);
+      }
+    }
+
+    // 2. Liserés : un trait clair en haut, une ombre en bas, uniquement là où
+    //    la case voisine est d'une AUTRE matière. C'est ce qui donne
+    //    l'impression que chaque zone est un volume posé sur le sol.
+    for (let ly = 0; ly < v.grilleTaille; ly += 1) {
+      for (let lx = 0; lx < v.grilleTaille; lx += 1) {
+        const sol = solA(lx, ly);
+        const p = PALETTES[sol] ?? PALETTES.herbe;
+        const [px, py] = versEcran((lx - centre) * TUILE - TUILE / 2, (ly - centre) * TUILE - TUILE / 2);
+        const ep = Math.max(2, pas * 0.09);
+        if (solA(lx, ly - 1) !== sol) { g.fillStyle = p.clair; g.fillRect(px, py, pas + 1, ep); }
+        if (solA(lx, ly + 1) !== sol) { g.fillStyle = p.ombre; g.fillRect(px, py + pas - ep, pas + 1, ep + 1); }
+        if (solA(lx - 1, ly) !== sol) { g.fillStyle = p.clair; g.globalAlpha = 0.55; g.fillRect(px, py, ep, pas + 1); g.globalAlpha = 1; }
+        if (solA(lx + 1, ly) !== sol) { g.fillStyle = p.ombre; g.globalAlpha = 0.55; g.fillRect(px + pas - ep, py, ep, pas + 1); g.globalAlpha = 1; }
+      }
+    }
+
+    // 3. Décor semé : touffes, cailloux, rivets… posés seulement sur les cases
+    //    qui s'y prêtent, avec une densité mesurée pour rester lisible.
+    for (let ly = 0; ly < v.grilleTaille; ly += 1) {
+      for (let lx = 0; lx < v.grilleTaille; lx += 1) {
+        const sol = solA(lx, ly);
+        const [px, py] = versEcran((lx - centre) * TUILE - TUILE / 2, (ly - centre) * TUILE - TUILE / 2);
+        this.props(g, px, py, pas, lx, ly, sol);
+      }
+    }
+
+    this._decor = c;
+    this._decorCle = cle;
+    return c;
+  }
+
+  /** Grain d'une case : taches de deux nuances, motif propre à la matière. */
+  grain(g, px, py, pas, lx, ly, p, sol) {
+    const taches = sol === 'metal' ? 4 : 7;
+    for (let i = 0; i < taches; i += 1) {
+      const rx = alea(lx, ly, i * 3 + 1);
+      const ry = alea(lx, ly, i * 3 + 2);
+      const rt = alea(lx, ly, i * 3 + 3);
+      g.fillStyle = rt > 0.5 ? p.grain1 : p.grain2;
+      const taille = pas * (0.07 + rt * 0.12);
+      g.fillRect(px + rx * (pas - taille), py + ry * (pas - taille), taille, taille);
+    }
+    // Chaque matière a en plus sa signature graphique.
+    if (sol === 'glace') {
+      // Éclats en diagonale, façon givre.
+      g.strokeStyle = p.clair; g.globalAlpha = 0.5; g.lineWidth = Math.max(1, pas * 0.03);
+      for (let i = 0; i < 2; i += 1) {
+        const a = alea(lx, ly, 40 + i) * pas; const b = alea(lx, ly, 50 + i) * pas;
+        g.beginPath(); g.moveTo(px + a, py + b); g.lineTo(px + a + pas * 0.22, py + b + pas * 0.16); g.stroke();
+      }
+      g.globalAlpha = 1;
+    } else if (sol === 'metal') {
+      // Rivets aux quatre coins : lecture immédiate de la plaque.
+      g.fillStyle = p.clair;
+      const r = Math.max(1.5, pas * 0.045);
+      for (const [dx, dy] of [[0.16, 0.16], [0.84, 0.16], [0.16, 0.84], [0.84, 0.84]]) {
+        g.beginPath(); g.arc(px + dx * pas, py + dy * pas, r, 0, Math.PI * 2); g.fill();
+      }
+      g.strokeStyle = p.ombre; g.lineWidth = Math.max(1, pas * 0.02);
+      g.strokeRect(px + pas * 0.08, py + pas * 0.08, pas * 0.84, pas * 0.84);
+    } else if (sol === 'caoutchouc') {
+      // Damier souple, comme un tapis de gymnase.
+      g.fillStyle = p.grain2; g.globalAlpha = 0.45;
+      for (let i = 0; i < 4; i += 1) {
+        const dx = (i % 2) * 0.5; const dy = Math.floor(i / 2) * 0.5;
+        if ((lx + ly + i) % 2 === 0) g.fillRect(px + dx * pas, py + dy * pas, pas * 0.5, pas * 0.5);
+      }
+      g.globalAlpha = 1;
+    } else if (sol === 'sable') {
+      // Ondulations de dune.
+      g.strokeStyle = p.grain1; g.globalAlpha = 0.6; g.lineWidth = Math.max(1, pas * 0.025);
+      for (let i = 0; i < 3; i += 1) {
+        const y = py + (0.2 + i * 0.3) * pas + alea(lx, ly, 60 + i) * pas * 0.06;
+        g.beginPath(); g.moveTo(px + pas * 0.1, y);
+        g.quadraticCurveTo(px + pas * 0.5, y - pas * 0.06, px + pas * 0.9, y);
+        g.stroke();
+      }
+      g.globalAlpha = 1;
+    }
+  }
+
+  /** Éléments de décor posés sur une case, selon sa matière. */
+  props(g, px, py, pas, lx, ly, sol) {
+    const d = alea(lx, ly, 7);
+    if (sol === 'herbe') {
+      if (d > 0.55) {
+        // Touffes d'herbe : trois brins courbes.
+        const n = 2 + Math.floor(alea(lx, ly, 8) * 3);
+        for (let i = 0; i < n; i += 1) {
+          const bx = px + (0.15 + alea(lx, ly, 90 + i) * 0.7) * pas;
+          const by = py + (0.25 + alea(lx, ly, 100 + i) * 0.6) * pas;
+          const hh = pas * (0.1 + alea(lx, ly, 110 + i) * 0.09);
+          g.strokeStyle = alea(lx, ly, 120 + i) > 0.5 ? PALETTES.herbe.clair : PALETTES.herbe.grain1;
+          g.lineWidth = Math.max(1.2, pas * 0.028);
+          g.lineCap = 'round';
+          for (const s of [-1, 0, 1]) {
+            g.beginPath();
+            g.moveTo(bx + s * pas * 0.035, by);
+            g.quadraticCurveTo(bx + s * pas * 0.06, by - hh * 0.7, bx + s * pas * 0.09, by - hh);
+            g.stroke();
+          }
+        }
+      }
+      if (d > 0.9) {
+        // Buisson touffu, plus rare.
+        const bx = px + pas * 0.5; const by = py + pas * 0.55;
+        g.fillStyle = PALETTES.herbe.ombre;
+        g.beginPath(); g.ellipse(bx, by + pas * 0.06, pas * 0.2, pas * 0.09, 0, 0, Math.PI * 2); g.fill();
+        for (const [ox, oy, r] of [[-0.09, 0, 0.11], [0.09, -0.02, 0.1], [0, -0.09, 0.12]]) {
+          g.fillStyle = PALETTES.herbe.grain2;
+          g.beginPath(); g.arc(bx + ox * pas, by + oy * pas, r * pas, 0, Math.PI * 2); g.fill();
+          g.fillStyle = PALETTES.herbe.clair;
+          g.beginPath(); g.arc(bx + ox * pas - r * pas * 0.25, by + oy * pas - r * pas * 0.3, r * pas * 0.45, 0, Math.PI * 2); g.fill();
+        }
+      }
+    } else if (sol === 'sable' && d > 0.82) {
+      // Cailloux posés sur le sable, avec leur ombre.
+      const bx = px + (0.25 + alea(lx, ly, 9) * 0.5) * pas;
+      const by = py + (0.3 + alea(lx, ly, 10) * 0.4) * pas;
+      const r = pas * (0.06 + alea(lx, ly, 11) * 0.05);
+      g.fillStyle = 'rgba(0,0,0,.18)';
+      g.beginPath(); g.ellipse(bx, by + r * 0.7, r * 1.15, r * 0.5, 0, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#9c8f7a';
+      g.beginPath(); g.arc(bx, by, r, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#c2b59d';
+      g.beginPath(); g.arc(bx - r * 0.3, by - r * 0.3, r * 0.5, 0, Math.PI * 2); g.fill();
+    } else if (sol === 'glace' && d > 0.86) {
+      // Blocs de glace saillants.
+      const bx = px + (0.3 + alea(lx, ly, 12) * 0.4) * pas;
+      const by = py + (0.3 + alea(lx, ly, 13) * 0.4) * pas;
+      const r = pas * 0.11;
+      g.fillStyle = 'rgba(255,255,255,.75)';
+      g.beginPath();
+      g.moveTo(bx, by - r); g.lineTo(bx + r * 0.8, by); g.lineTo(bx, by + r * 0.8); g.lineTo(bx - r * 0.8, by);
+      g.closePath(); g.fill();
+      g.strokeStyle = PALETTES.glace.ombre; g.lineWidth = Math.max(1, pas * 0.02); g.stroke();
+    } else if (sol === 'lave' && d > 0.6) {
+      // Croûtes sombres flottant sur la lave.
+      const bx = px + (0.2 + alea(lx, ly, 14) * 0.6) * pas;
+      const by = py + (0.2 + alea(lx, ly, 15) * 0.6) * pas;
+      g.fillStyle = 'rgba(60,18,8,.75)';
+      g.beginPath(); g.ellipse(bx, by, pas * 0.13, pas * 0.08, alea(lx, ly, 16) * 3, 0, Math.PI * 2); g.fill();
+    }
+  }
+
   dessiner() {
     const v = this.vue;
     const g = this.canvasCtx;
@@ -277,40 +476,52 @@ class SpringClashUI {
     const versEcran = (x, y) => [T / 2 + x * echelle, T / 2 + y * echelle];
 
     g.clearRect(0, 0, T, T);
-
-    // Le sol, découpé au disque de l'arène : ce qui dépasse est déjà tombé.
-    g.save();
-    g.beginPath();
     const [cx, cy] = versEcran(0, 0);
-    g.arc(cx, cy, v.rayon * echelle, 0, Math.PI * 2);
-    g.clip();
-    const c = Math.floor(v.grilleTaille / 2);
-    for (let ly = 0; ly < v.grilleTaille; ly += 1) {
-      for (let lx = 0; lx < v.grilleTaille; lx += 1) {
-        const sol = v.sols[ly][lx];
-        g.fillStyle = TEINTES_SOL[sol] ?? '#2f6b3a';
-        const [px, py] = versEcran((lx - c) * TUILE - TUILE / 2, (ly - c) * TUILE - TUILE / 2);
-        g.fillRect(px, py, TUILE * echelle + 1, TUILE * echelle + 1);
-      }
-    }
-    // La lave pulse : on doit la repérer d'un coup d'œil.
+    const rayonEcran = v.rayon * echelle;
+
+    // Ombre portée de la plateforme : elle flotte dans le vide, on doit le voir.
+    g.save();
+    g.fillStyle = 'rgba(0,0,0,.45)';
+    g.beginPath(); g.arc(cx, cy + rayonEcran * 0.05, rayonEcran * 1.04, 0, Math.PI * 2); g.fill();
+    g.restore();
+
+    // Le décor, peint une seule fois puis découpé au disque de l'arène.
+    g.save();
+    g.beginPath(); g.arc(cx, cy, rayonEcran, 0, Math.PI * 2); g.clip();
+    g.drawImage(this.calqueDecor(v, T, echelle), 0, 0);
+
+    // La lave respire par-dessus le décor figé : c'est le seul élément animé
+    // du terrain, et il doit sauter aux yeux.
     const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 260);
-    g.globalAlpha = 0.18 + pulse * 0.22;
+    const centre = Math.floor(v.grilleTaille / 2);
+    const pas = TUILE * echelle;
+    g.globalAlpha = 0.14 + pulse * 0.24;
+    g.fillStyle = '#ffb347';
     for (let ly = 0; ly < v.grilleTaille; ly += 1) {
       for (let lx = 0; lx < v.grilleTaille; lx += 1) {
         if (v.sols[ly][lx] !== 'lave') continue;
-        g.fillStyle = '#ffd166';
-        const [px, py] = versEcran((lx - c) * TUILE - TUILE / 2, (ly - c) * TUILE - TUILE / 2);
-        g.fillRect(px, py, TUILE * echelle + 1, TUILE * echelle + 1);
+        const [px, py] = versEcran((lx - centre) * TUILE - TUILE / 2, (ly - centre) * TUILE - TUILE / 2);
+        g.fillRect(px, py, pas + 1, pas + 1);
       }
     }
     g.globalAlpha = 1;
+
+    // Vignette : les bords s'assombrissent, le regard reste au centre.
+    const vign = g.createRadialGradient(cx, cy, rayonEcran * 0.55, cx, cy, rayonEcran);
+    vign.addColorStop(0, 'rgba(0,0,0,0)');
+    vign.addColorStop(1, 'rgba(0,0,0,.38)');
+    g.fillStyle = vign;
+    g.beginPath(); g.arc(cx, cy, rayonEcran, 0, Math.PI * 2); g.fill();
     g.restore();
 
-    // Bord de l'arène.
-    g.strokeStyle = 'rgba(255,255,255,.55)';
-    g.lineWidth = 5;
-    g.beginPath(); g.arc(cx, cy, v.rayon * echelle, 0, Math.PI * 2); g.stroke();
+    // Rebord de la plateforme : une tranche claire puis un liseré sombre, pour
+    // que le disque ait de l'épaisseur au lieu d'être un simple cercle plat.
+    g.lineWidth = Math.max(4, rayonEcran * 0.035);
+    g.strokeStyle = '#8a6a45';
+    g.beginPath(); g.arc(cx, cy, rayonEcran + g.lineWidth * 0.35, 0, Math.PI * 2); g.stroke();
+    g.lineWidth = Math.max(2, rayonEcran * 0.014);
+    g.strokeStyle = 'rgba(255,240,214,.75)';
+    g.beginPath(); g.arc(cx, cy, rayonEcran - 1, 0, Math.PI * 2); g.stroke();
 
     for (const f of v.effets ?? []) this.dessinerEffet(g, f, versEcran, echelle, v.t);
 
@@ -325,6 +536,15 @@ class SpringClashUI {
     const taille = CUBE_RAYON * 2 * echelle;
     const couleur = COULEURS[i % COULEURS.length];
     const estMoi = cube.id === this.ctx.me.id;
+
+    // Ombre portée : sur un décor chargé, un cube sans ombre a l'air collé
+    // dessus au lieu d'être posé dessus.
+    g.save();
+    g.fillStyle = 'rgba(0,0,0,.32)';
+    g.beginPath();
+    g.ellipse(x, y + taille * 0.45, taille * 0.52, taille * 0.22, 0, 0, Math.PI * 2);
+    g.fill();
+    g.restore();
 
     // Ressort : comprimé (court et large) puis détendu (long).
     const compresse = cube.ressort === 'compression';
@@ -352,11 +572,17 @@ class SpringClashUI {
     g.save();
     g.translate(x, y);
     g.rotate(cube.angle);
-    g.fillStyle = couleur;
+    const d = taille / 2;
+    // Dégradé vertical + arête claire en haut : le cube prend du relief.
+    const dg = g.createLinearGradient(0, -d, 0, d);
+    dg.addColorStop(0, couleur);
+    dg.addColorStop(1, this.assombrir(couleur, 0.62));
+    g.fillStyle = dg;
     g.strokeStyle = estMoi ? '#fff' : 'rgba(0,0,0,.55)';
     g.lineWidth = estMoi ? 4 : 2.5;
-    const d = taille / 2;
     g.fillRect(-d, -d, taille, taille);
+    g.fillStyle = 'rgba(255,255,255,.28)';
+    g.fillRect(-d, -d, taille, taille * 0.16);
     g.strokeRect(-d, -d, taille, taille);
     // Un repère de direction : on doit savoir où l'on va tirer.
     g.fillStyle = 'rgba(255,255,255,.85)';
@@ -383,6 +609,15 @@ class SpringClashUI {
     g.font = `${Math.round(taille * 0.42)}px system-ui, sans-serif`;
     g.textAlign = 'center';
     g.fillText(cube.pseudo, x, y - taille * 1.05);
+  }
+
+  /** Variante plus sombre d'une couleur #rrggbb, pour les dégradés. */
+  assombrir(hex, facteur) {
+    const n = parseInt(hex.slice(1), 16);
+    const r = Math.round(((n >> 16) & 255) * facteur);
+    const v = Math.round(((n >> 8) & 255) * facteur);
+    const b = Math.round((n & 255) * facteur);
+    return `rgb(${r},${v},${b})`;
   }
 
   dessinerEffet(g, f, versEcran, echelle, t) {

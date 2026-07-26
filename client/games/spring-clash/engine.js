@@ -25,7 +25,10 @@ export const ARENE_RAYON = 15;             // rayon de départ, en unités de je
 export const CUBE_RAYON = 0.55;
 
 // Déplacement.
-const VITESSE_MARCHE = 5.2;                // unités/seconde
+// Déplacement volontairement posé : on avance lentement, et c'est le ressort
+// qui donne toute la vitesse. Réduit de 25 % (5,2 → 3,9) pour accentuer ce
+// contraste — la marche sert à se placer, le ressort à agir.
+const VITESSE_MARCHE = 3.9;                // unités/seconde
 const FROTTEMENT = 6.5;                    // décélération quand on ne pousse plus
 const VITESSE_MAX = 26;
 
