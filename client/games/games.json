@@ -332,6 +332,21 @@
       "visible": true
     },
     {
+      "id": "spring-clash",
+      "nom": "Spring Clash",
+      "description": "Un cube et un ressort : ce n’est pas notre projet de voiture, c’est un jeu.",
+      "icone": "🟦",
+      "image": "/games/spring-clash/assets/cover.png",
+      "joueursMin": 2,
+      "joueursMax": 8,
+      "etat": "disponible",
+      "version": "1.0.0",
+      "auteur": "Manu",
+      "module": "index.js",
+      "chemin": "/games/spring-clash/",
+      "visible": true
+    },
+    {
       "id": "gemplacement",
       "nom": "Notre équipe",
       "description": "Une équipe de drogués trisomiques peine nuit et jour au développement de cette application.",
