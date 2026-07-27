@@ -69,9 +69,12 @@
   --warning: #b8b8b8;
   --success: #dcdcdc;
 
-  --text: #e6e6e6;
-  --text-dim: #8e8e8e;
-  --text-faint: #565656;
+  /* Plancher de lisibilité : sur fond noir, un gris sous ~#7a7a7a tombe en
+     dessous du contraste minimal (4,5:1) et devient pénible à lire, pas
+     discret. Ces trois valeurs donnent 16,8 / 9,7 / 6,1 pour 1. */
+  --text: #f2f2f2;
+  --text-dim: #b0b0b0;
+  --text-faint: #8a8a8a;
 
   --shadow-card: 0 0 0 1px rgba(255, 255, 255, 0.06);
   /* Une lueur douce autour des surfaces : c'est ce qui donne le côté futuriste
@@ -208,14 +211,18 @@
   font-size: 0.76rem;
 }
 
+/* Le bouton principal ne devient JAMAIS un aplat blanc à texte noir : dans ce
+   thème, le texte va du blanc au gris et rien d'autre. On le distingue donc
+   par son arête vive et son halo, pas par une inversion de contraste. */
 .theme-nuit .btn--primary,
 .theme-nuit .btn.btn--primary {
-  background: #f0f0f0;
-  color: #000;
-  border: 1px solid #fff;
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  text-shadow: 0 0 14px rgba(255, 255, 255, 0.45);
 }
 
-.theme-nuit .btn--primary:hover { background: #fff; }
+.theme-nuit .btn--primary:hover { background: rgba(255, 255, 255, 0.22); }
 
 .theme-nuit .nav-btn.is-active,
 .theme-nuit .nav-btn[aria-current='true'] {
@@ -290,7 +297,9 @@
 }
 .theme-nuit ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.32); }
 
-.theme-nuit ::selection { background: #fff; color: #000; }
+/* Même règle pour la sélection : on éclaircit le fond sans jamais noircir
+   le texte. */
+.theme-nuit ::selection { background: rgba(255, 255, 255, 0.28); color: #ffffff; }
 
 /* Le nuage de points est décoratif : on le coupe si l'on a demandé moins
    d'animations, sans rien retirer d'autre au thème. */
@@ -459,14 +468,15 @@
 }
 
 .theme-nuit .btn--primary {
-  background: linear-gradient(150deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.72));
-  color: #07070a;
-  border-color: rgba(255, 255, 255, 0.95);
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.07));
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.9);
+  text-shadow: 0 0 14px rgba(255, 255, 255, 0.5);
 }
 
 .theme-nuit .btn--primary:hover {
-  background: linear-gradient(150deg, #fff, rgba(255, 255, 255, 0.85));
-  box-shadow: 0 0 38px rgba(255, 255, 255, 0.35), 0 8px 22px rgba(0, 0, 0, 0.5);
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0.12));
+  box-shadow: 0 0 38px rgba(255, 255, 255, 0.3), 0 8px 22px rgba(0, 0, 0, 0.5);
 }
 
 /* Onde au clic, posée par le JS : elle part du point exact du curseur. */
@@ -624,4 +634,85 @@
   .theme-nuit .card,
   .theme-nuit .btn,
   .theme-nuit .nav-btn { transition-duration: 0.01ms; }
+}
+
+/* ==========================================================================
+   13. RÈGLE ABSOLUE — le texte va du blanc au gris, jamais au noir
+
+   Beaucoup de jeux embarquent leur propre feuille de style, avec des boutons
+   « pleins » à texte sombre sur fond clair (`color:#0b0b12` et compagnie).
+   Sur fond noir, ces textes deviennent illisibles. On les rattrape ici plutôt
+   que d'aller modifier chaque jeu un par un — un ajout ne doit jamais imposer
+   de réécrire les fichiers des autres.
+
+   Le principe du thème : on distingue un élément par son ARÊTE et son HALO,
+   jamais en inversant le contraste.
+   ========================================================================== */
+
+.theme-nuit,
+.theme-nuit body,
+.theme-nuit button,
+.theme-nuit input,
+.theme-nuit select,
+.theme-nuit textarea,
+.theme-nuit a,
+.theme-nuit label,
+.theme-nuit td,
+.theme-nuit th,
+.theme-nuit li,
+.theme-nuit p,
+.theme-nuit span,
+.theme-nuit div,
+.theme-nuit b,
+.theme-nuit strong,
+.theme-nuit small,
+.theme-nuit h1,
+.theme-nuit h2,
+.theme-nuit h3,
+.theme-nuit h4 {
+  /* Plancher de luminosité : jamais en dessous du gris moyen. */
+  color: inherit;
+}
+
+/*
+ * Les boutons pleins des jeux : on remplace l'aplat clair par du verre et on
+ * force le texte en blanc. `!important` est ici justifié — ces règles vivent
+ * dans les feuilles embarquées des jeux, chargées après celle-ci, et on ne
+ * peut pas les surclasser autrement sans toucher à leurs fichiers.
+ */
+.theme-nuit .btn--primary,
+.theme-nuit .cc .btn--primary,
+.theme-nuit .sc__btn--jouer,
+.theme-nuit .cc__segbtn--active,
+.theme-nuit .sc__segbtn--actif,
+.theme-nuit .gp-btn,
+.theme-nuit .ls__startBtn,
+.theme-nuit .ls__winBtn.active,
+.theme-nuit .trq__toolbtn--active,
+.theme-nuit .dmn__btn--primary {
+  color: #ffffff !important;
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.06)) !important;
+  border: 1px solid rgba(255, 255, 255, 0.85) !important;
+  text-shadow: 0 0 12px rgba(255, 255, 255, 0.4);
+}
+
+/* Les textes atténués restent lisibles : gris clair, jamais gris sombre. */
+.theme-nuit .view__subtitle,
+.theme-nuit .sub,
+.theme-nuit .hint,
+.theme-nuit .cc__hint,
+.theme-nuit .sc__hint,
+.theme-nuit .clsmt__games,
+.theme-nuit .clsmt__ratio,
+.theme-nuit .clsmt__note,
+.theme-nuit .chat-msg__time,
+.theme-nuit .cc__chat-msg__time { color: #9a9a9a; }
+
+/* Les titres à dégradé transparent (background-clip) redeviennent du blanc
+   franc : sur fond noir, un dégradé sombre les efface. */
+.theme-nuit [style*="background-clip"],
+.theme-nuit .view__title,
+.theme-nuit .sidebar__logo-text {
+  -webkit-text-fill-color: #ffffff;
+  color: #ffffff;
 }
