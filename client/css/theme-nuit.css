@@ -297,3 +297,331 @@
 @media (prefers-reduced-motion: reduce) {
   .nuit-fond { display: none; }
 }
+
+/* ==========================================================================
+   9. GLASSMORPHISME — verre, arêtes lumineuses, reflets
+
+   Trois ingrédients reproduisent l'effet de la référence :
+     1. un fond translucide très sombre avec un dégradé oblique (le corps du
+        verre) ;
+     2. une ARÊTE lumineuse asymétrique — vive en haut à gauche, en bas à
+        droite, éteinte ailleurs : c'est elle qui fait « plaque de verre »
+        plutôt que « rectangle gris » ;
+     3. un REFLET diagonal qui balaie la surface au survol.
+   L'arête est faite au masque (`mask-composite`) plutôt qu'avec une bordure :
+   une bordure serait uniforme, alors qu'un vrai reflet ne l'est jamais.
+   ========================================================================== */
+
+.theme-nuit .card,
+.theme-nuit .panel,
+.theme-nuit .modal,
+.theme-nuit .game-card,
+.theme-nuit .cc__panel,
+.theme-nuit .sc__panneau,
+.theme-nuit .chat {
+  position: relative;
+  border: none;
+  border-radius: 18px;
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.075) 0%, rgba(255, 255, 255, 0.018) 42%, rgba(255, 255, 255, 0.045) 100%),
+    rgba(12, 12, 14, 0.55);
+  backdrop-filter: blur(14px) saturate(115%);
+  -webkit-backdrop-filter: blur(14px) saturate(115%);
+  box-shadow:
+    0 10px 34px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  overflow: hidden;
+  transition: transform 0.4s var(--ease, cubic-bezier(0.22, 1, 0.36, 1)),
+              box-shadow 0.4s ease;
+}
+
+/* L'arête de verre : un anneau dégradé, découpé au masque. */
+.theme-nuit .card::before,
+.theme-nuit .panel::before,
+.theme-nuit .game-card::before,
+.theme-nuit .cc__panel::before,
+.theme-nuit .sc__panneau::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(140deg,
+    rgba(255, 255, 255, 0.95) 0%,
+    rgba(255, 255, 255, 0.15) 22%,
+    rgba(255, 255, 255, 0.04) 50%,
+    rgba(255, 255, 255, 0.28) 78%,
+    rgba(255, 255, 255, 0.85) 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  transition: opacity 0.4s ease;
+  opacity: 0.75;
+  border: none;
+  width: auto;
+  height: auto;
+}
+
+/* Le reflet qui balaie : au repos il attend hors-champ, à droite. */
+.theme-nuit .card::after,
+.theme-nuit .panel::after,
+.theme-nuit .game-card::after,
+.theme-nuit .cc__panel::after {
+  content: '';
+  position: absolute;
+  top: -60%;
+  left: -70%;
+  width: 45%;
+  height: 220%;
+  background: linear-gradient(100deg,
+    transparent, rgba(255, 255, 255, 0.10) 45%, rgba(255, 255, 255, 0.16) 50%, rgba(255, 255, 255, 0.10) 55%, transparent);
+  transform: rotate(18deg) translateX(0);
+  transition: transform 0.75s cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+  border: none;
+}
+
+.theme-nuit .card:hover,
+.theme-nuit .panel:hover,
+.theme-nuit .game-card:hover {
+  transform: translateY(-5px);
+  box-shadow:
+    0 18px 46px rgba(0, 0, 0, 0.72),
+    0 0 42px rgba(255, 255, 255, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.theme-nuit .card:hover::before,
+.theme-nuit .panel:hover::before,
+.theme-nuit .game-card:hover::before { opacity: 1; }
+
+/* Le reflet traverse la surface au survol. */
+.theme-nuit .card:hover::after,
+.theme-nuit .panel:hover::after,
+.theme-nuit .game-card:hover::after { transform: rotate(18deg) translateX(340%); }
+
+/* --------------------------------------------------------------------------
+   10. Boutons de verre — pilules à arête lumineuse
+   -------------------------------------------------------------------------- */
+
+.theme-nuit .btn,
+.theme-nuit button:not(.lune-btn):not(.nav-btn) {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.02));
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 4px 16px rgba(0, 0, 0, 0.45);
+  transition: transform 0.22s var(--ease, cubic-bezier(0.22, 1, 0.36, 1)),
+              box-shadow 0.28s ease, border-color 0.28s ease, background 0.28s ease;
+}
+
+/* Reflet du bouton, plus rapide que celui des cartes. */
+.theme-nuit .btn::after,
+.theme-nuit button:not(.lune-btn):not(.nav-btn)::after {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -60%;
+  width: 40%;
+  height: 200%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.22) 50%, transparent);
+  transform: rotate(20deg) translateX(0);
+  transition: transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+}
+
+.theme-nuit .btn:hover,
+.theme-nuit button:not(.lune-btn):not(.nav-btn):hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.55);
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.05));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    0 0 26px rgba(255, 255, 255, 0.15),
+    0 8px 22px rgba(0, 0, 0, 0.5);
+}
+
+.theme-nuit .btn:hover::after,
+.theme-nuit button:not(.lune-btn):not(.nav-btn):hover::after { transform: rotate(20deg) translateX(360%); }
+
+/* Enfoncement : court, sec, et l'arête s'allume franchement. */
+.theme-nuit .btn:active,
+.theme-nuit button:not(.lune-btn):not(.nav-btn):active {
+  transform: translateY(1px) scale(0.975);
+  border-color: rgba(255, 255, 255, 0.9);
+  box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.6), 0 0 34px rgba(255, 255, 255, 0.22);
+  transition-duration: 0.07s;
+}
+
+.theme-nuit .btn--primary {
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.72));
+  color: #07070a;
+  border-color: rgba(255, 255, 255, 0.95);
+}
+
+.theme-nuit .btn--primary:hover {
+  background: linear-gradient(150deg, #fff, rgba(255, 255, 255, 0.85));
+  box-shadow: 0 0 38px rgba(255, 255, 255, 0.35), 0 8px 22px rgba(0, 0, 0, 0.5);
+}
+
+/* Onde au clic, posée par le JS : elle part du point exact du curseur. */
+.theme-nuit .onde {
+  position: absolute;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0.12) 45%, transparent 70%);
+  transform: translate(-50%, -50%) scale(0);
+  pointer-events: none;
+  animation: onde-diffuse 0.62s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes onde-diffuse {
+  to { transform: translate(-50%, -50%) scale(1); opacity: 0; }
+}
+
+/* --------------------------------------------------------------------------
+   11. Barre latérale — sans emoji, avec repère animé
+
+   Les emojis colorés n'ont rien à faire dans un rendu monochrome : on les
+   retire (et non on les grise), et un repère géométrique dessiné en CSS prend
+   leur place — dans l'esprit des icônes filaires de la référence.
+   -------------------------------------------------------------------------- */
+
+.theme-nuit .nav-btn > span[aria-hidden],
+.theme-nuit .sidebar__logo-icon { display: none; }
+
+.theme-nuit .nav-btn {
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+  padding-left: 34px;
+  background: transparent;
+  border: 1px solid transparent;
+  transition: background 0.3s ease, border-color 0.3s ease, padding-left 0.3s var(--ease, ease), color 0.3s ease;
+}
+
+/* Le repère : un losange filaire qui pivote au survol. */
+.theme-nuit .nav-btn::before {
+  content: '';
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  margin-top: -4px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  transform: rotate(45deg) scale(0.85);
+  transition: transform 0.45s var(--ease, cubic-bezier(0.22, 1, 0.36, 1)),
+              border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* Trait lumineux qui balaie l'entrée au survol. */
+.theme-nuit .nav-btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.12), transparent);
+  transform: translateX(-110%);
+  transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+}
+
+.theme-nuit .nav-btn:hover {
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 255, 255, 0.2);
+  padding-left: 40px;
+  color: #fff;
+}
+
+.theme-nuit .nav-btn:hover::before {
+  transform: rotate(135deg) scale(1.15);
+  border-color: #fff;
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.6);
+}
+
+.theme-nuit .nav-btn:hover::after { transform: translateX(110%); }
+
+.theme-nuit .nav-btn:active { transform: scale(0.985); }
+
+.theme-nuit .nav-btn.is-active {
+  background: linear-gradient(100deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.03));
+  border-color: rgba(255, 255, 255, 0.4);
+  border-left: 2px solid #fff;
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 0 24px rgba(255, 255, 255, 0.06);
+}
+
+.theme-nuit .nav-btn.is-active::before {
+  transform: rotate(135deg) scale(1.1);
+  border-color: #fff;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 14px rgba(255, 255, 255, 0.8);
+}
+
+/* --------------------------------------------------------------------------
+   12. Entrées en scène — les briques arrivent une par une
+   -------------------------------------------------------------------------- */
+
+.theme-nuit .view { animation: verre-entree 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@keyframes verre-entree {
+  from { opacity: 0; transform: translateY(14px) scale(0.99); filter: blur(4px); }
+  to { opacity: 1; transform: none; filter: blur(0); }
+}
+
+/* Décalage en cascade : chaque carte entre légèrement après la précédente. */
+.theme-nuit .card,
+.theme-nuit .game-card { animation: verre-entree 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.theme-nuit .card:nth-child(1), .theme-nuit .game-card:nth-child(1) { animation-delay: 0.02s; }
+.theme-nuit .card:nth-child(2), .theme-nuit .game-card:nth-child(2) { animation-delay: 0.06s; }
+.theme-nuit .card:nth-child(3), .theme-nuit .game-card:nth-child(3) { animation-delay: 0.10s; }
+.theme-nuit .card:nth-child(4), .theme-nuit .game-card:nth-child(4) { animation-delay: 0.14s; }
+.theme-nuit .card:nth-child(5), .theme-nuit .game-card:nth-child(5) { animation-delay: 0.18s; }
+.theme-nuit .card:nth-child(n+6), .theme-nuit .game-card:nth-child(n+6) { animation-delay: 0.22s; }
+
+/* Champs de saisie : l'arête s'allume à la mise au point. */
+.theme-nuit input,
+.theme-nuit select,
+.theme-nuit textarea {
+  border-radius: 12px;
+  transition: border-color 0.28s ease, box-shadow 0.28s ease, background 0.28s ease;
+}
+
+.theme-nuit input:focus,
+.theme-nuit select:focus,
+.theme-nuit textarea:focus {
+  border-color: rgba(255, 255, 255, 0.8);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25), 0 0 26px rgba(255, 255, 255, 0.12);
+}
+
+/* Le bouton lune reçoit le même traitement de verre. */
+.theme-nuit .lune-btn {
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02));
+  border-color: rgba(255, 255, 255, 0.3);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 0 22px rgba(255, 255, 255, 0.08);
+}
+
+.theme-nuit .lune-btn:hover {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 0 34px rgba(255, 255, 255, 0.28);
+  border-color: rgba(255, 255, 255, 0.75);
+}
+
+/* Rien de tout cela ne doit s'agiter si l'on a demandé moins d'animations. */
+@media (prefers-reduced-motion: reduce) {
+  .theme-nuit .card,
+  .theme-nuit .game-card,
+  .theme-nuit .view,
+  .theme-nuit .onde { animation: none; }
+  .theme-nuit .card::after,
+  .theme-nuit .btn::after,
+  .theme-nuit .nav-btn::after { display: none; }
+  .theme-nuit .card,
+  .theme-nuit .btn,
+  .theme-nuit .nav-btn { transition-duration: 0.01ms; }
+}

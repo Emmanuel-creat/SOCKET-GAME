@@ -186,6 +186,48 @@ class FondNuit {
   }
 }
 
+
+/* ------------------------------------------------------------------ */
+/* Onde au clic                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Pose une onde lumineuse à l'endroit exact du clic. Le CSS seul ne peut pas
+ * le faire : il ignore où se trouve le curseur. Un seul écouteur sur le
+ * document suffit — inutile d'en attacher un à chaque bouton, d'autant que
+ * l'interface en recrée en permanence.
+ */
+function initOnde() {
+  document.addEventListener('pointerdown', (e) => {
+    if (!document.documentElement.classList.contains('theme-nuit')) return;
+    const cible = e.target?.closest?.('button, .btn, .nav-btn, .game-card');
+    if (!cible || cible.classList.contains('lune-btn')) return;
+
+    const boite = cible.getBoundingClientRect();
+    // L'onde doit couvrir tout l'élément, même si l'on clique dans un coin :
+    // son diamètre est donc calculé depuis le point de clic le plus éloigné.
+    const dx = Math.max(e.clientX - boite.left, boite.right - e.clientX);
+    const dy = Math.max(e.clientY - boite.top, boite.bottom - e.clientY);
+    const taille = Math.hypot(dx, dy) * 2;
+
+    const onde = document.createElement('span');
+    onde.className = 'onde';
+    onde.style.width = `${taille}px`;
+    onde.style.height = `${taille}px`;
+    onde.style.left = `${e.clientX - boite.left}px`;
+    onde.style.top = `${e.clientY - boite.top}px`;
+
+    // L'élément doit pouvoir contenir l'onde en position absolue.
+    const position = getComputedStyle(cible).position;
+    if (position === 'static') cible.style.position = 'relative';
+
+    cible.append(onde);
+    // On nettoie à la fin de l'animation plutôt qu'après un délai fixe : si le
+    // navigateur ralentit, l'onde ne disparaît pas avant d'avoir été vue.
+    onde.addEventListener('animationend', () => onde.remove(), { once: true });
+  }, { passive: true });
+}
+
 /* ------------------------------------------------------------------ */
 
 let fond = null;
@@ -210,6 +252,7 @@ function appliquer(actif, bouton) {
 }
 
 export function initThemeNuit() {
+  initOnde();
   const zone = document.getElementById('views');
   if (!zone) return;
 
