@@ -20,6 +20,7 @@ import { RoomView } from './views/RoomView.js';
 import { GameView } from './views/GameView.js';
 import { LABELS } from '/shared/constants.js';
 import { initEasterEggs } from './ui/easterEggs.js';
+import { initThemeNuit } from './ui/themeNuit.js';
 
 // --- Menu mobile (escamotable ≤ 820 px ; sans effet sur grand écran) ---
 initSidebarMobile();
@@ -43,6 +44,9 @@ new GameView({ socket });
 
 // Secrets maison : logo rebondissant, Konami, mode patate.
 initEasterEggs();
+
+// Thème nuit (bouton lune en haut à droite).
+initThemeNuit();
 
 // --- Sidebar : modales ---
 const modalOpeners = {

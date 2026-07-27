@@ -1,0 +1,298 @@
+/* ==========================================================================
+   Thème NUIT — visualisation de données monochrome.
+
+   Esprit : écran d'analyse, noir profond, tout en blanc et gris, relevés
+   chiffrés en petit, grille de fond, nuages de points. Aucune couleur : la
+   hiérarchie se fait uniquement par la luminosité et la finesse des traits.
+
+   Feuille DÉDIÉE, comme convenu : on n'étend jamais base.css ni views.css,
+   qui évoluent de leur côté.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Le bouton lune — en haut à droite, aligné sur les titres de vue
+   -------------------------------------------------------------------------- */
+
+.lune-btn {
+  position: absolute;
+  top: var(--gap-l, 24px);
+  right: var(--gap-l, 24px);
+  z-index: 40;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.16));
+  background: rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: transform 0.25s var(--ease, ease), background 0.2s, border-color 0.2s;
+}
+
+.lune-btn:hover {
+  transform: rotate(-18deg) scale(1.08);
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.lune-btn svg { width: 24px; height: 24px; display: block; }
+
+/* La zone des vues devient le repère de position du bouton. */
+.views { position: relative; }
+
+/* Sur mobile, la place est comptée : on réduit un peu et on se cale plus haut. */
+@media (max-width: 700px) {
+  .lune-btn { width: 36px; height: 36px; top: 12px; right: 12px; }
+  .lune-btn svg { width: 20px; height: 20px; }
+}
+
+/* --------------------------------------------------------------------------
+   2. Les jetons du thème
+
+   On ne redéfinit que les variables : tous les composants s'y adaptent seuls,
+   sans qu'aucun d'eux ait été modifié.
+   -------------------------------------------------------------------------- */
+
+.theme-nuit {
+  --bg-deep: #000000;
+  --bg-surface: #050505;
+  --glass: rgba(255, 255, 255, 0.035);
+  --glass-strong: rgba(255, 255, 255, 0.07);
+  --glass-border: rgba(255, 255, 255, 0.18);
+
+  /* Aucune couleur : les « accents » sont des blancs de densités différentes. */
+  --accent: #e8e8e8;
+  --accent-2: #9a9a9a;
+  --accent-gradient: linear-gradient(120deg, #ffffff 0%, #8a8a8a 100%);
+  --danger: #cfcfcf;
+  --warning: #b8b8b8;
+  --success: #dcdcdc;
+
+  --text: #e6e6e6;
+  --text-dim: #8e8e8e;
+  --text-faint: #565656;
+
+  --shadow-card: 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --shadow-glow: none;
+}
+
+/* --------------------------------------------------------------------------
+   3. Le fond : grille technique + nuage de points animé
+
+   Le nuage est dessiné par un canevas (voir themeNuit.js) ; ici on pose la
+   grille et le grain, purement en CSS.
+   -------------------------------------------------------------------------- */
+
+.theme-nuit body {
+  background:
+    /* fines lignes de repère, comme sur un relevé */
+    repeating-linear-gradient(to right, rgba(255, 255, 255, 0.028) 0 1px, transparent 1px 92px),
+    repeating-linear-gradient(to bottom, rgba(255, 255, 255, 0.028) 0 1px, transparent 1px 92px),
+    #000;
+}
+
+/* Le halo coloré d'origine n'a plus sa place ici. */
+.theme-nuit .bg-glow { display: none; }
+
+/* Le canevas du nuage de points, posé derrière toute l'interface. */
+.nuit-fond {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.9;
+}
+
+.theme-nuit #app { position: relative; z-index: 1; }
+
+/* --------------------------------------------------------------------------
+   4. Typographie : chiffrée, dense, technique
+   -------------------------------------------------------------------------- */
+
+.theme-nuit {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Consolas, monospace;
+}
+
+.theme-nuit body,
+.theme-nuit button,
+.theme-nuit input,
+.theme-nuit select,
+.theme-nuit textarea {
+  font-family: inherit;
+  letter-spacing: 0.01em;
+}
+
+.theme-nuit h1,
+.theme-nuit h2,
+.theme-nuit h3 {
+  font-family: inherit;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* Les titres perdent leur dégradé coloré au profit d'un blanc franc, souligné
+   d'un filet — comme un en-tête de rapport. */
+.theme-nuit .view__title {
+  background: none;
+  -webkit-text-fill-color: #fff;
+  color: #fff;
+  font-size: 1.1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.22);
+  padding-bottom: 8px;
+  width: 100%;
+}
+
+.theme-nuit .view__subtitle,
+.theme-nuit .sub {
+  font-size: 0.74rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* --------------------------------------------------------------------------
+   5. Surfaces : cartes à filets, angles marqués
+   -------------------------------------------------------------------------- */
+
+.theme-nuit .card,
+.theme-nuit .panel,
+.theme-nuit .cc__panel,
+.theme-nuit .sc__panneau {
+  background: rgba(255, 255, 255, 0.022);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 3px;
+  box-shadow: none;
+  position: relative;
+}
+
+/* Repères d'angle : deux traits qui évoquent un cadre de mesure. */
+.theme-nuit .card::before,
+.theme-nuit .card::after {
+  content: '';
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border-color: rgba(255, 255, 255, 0.5);
+  border-style: solid;
+  pointer-events: none;
+}
+.theme-nuit .card::before { top: -1px; left: -1px; border-width: 1px 0 0 1px; }
+.theme-nuit .card::after { bottom: -1px; right: -1px; border-width: 0 1px 1px 0; }
+
+.theme-nuit .sidebar {
+  background: rgba(255, 255, 255, 0.018);
+  border-right: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.theme-nuit .sidebar__logo-text {
+  background: none;
+  -webkit-text-fill-color: #fff;
+  color: #fff;
+  letter-spacing: 0.2em;
+  font-size: 1rem;
+}
+
+/* --------------------------------------------------------------------------
+   6. Boutons et champs : filaires, sans remplissage coloré
+   -------------------------------------------------------------------------- */
+
+.theme-nuit .btn,
+.theme-nuit .nav-btn,
+.theme-nuit button {
+  border-radius: 3px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.76rem;
+}
+
+.theme-nuit .btn--primary,
+.theme-nuit .btn.btn--primary {
+  background: #f0f0f0;
+  color: #000;
+  border: 1px solid #fff;
+}
+
+.theme-nuit .btn--primary:hover { background: #fff; }
+
+.theme-nuit .nav-btn.is-active,
+.theme-nuit .nav-btn[aria-current='true'] {
+  background: rgba(255, 255, 255, 0.1);
+  border-left: 2px solid #fff;
+  color: #fff;
+}
+
+.theme-nuit input,
+.theme-nuit select,
+.theme-nuit textarea {
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #eee;
+}
+
+.theme-nuit input:focus,
+.theme-nuit select:focus,
+.theme-nuit textarea:focus {
+  outline: none;
+  border-color: #fff;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+/* --------------------------------------------------------------------------
+   7. Étiquettes, badges, tableaux : tout en chiffres et filets
+   -------------------------------------------------------------------------- */
+
+.theme-nuit .tag,
+.theme-nuit .badge,
+.theme-nuit .pill {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 2px;
+  color: var(--text-dim);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.66rem;
+}
+
+.theme-nuit table { font-variant-numeric: tabular-nums; }
+.theme-nuit th,
+.theme-nuit td { border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+
+/* Le classement devient une vraie table de relevés. */
+.theme-nuit .clsmt__row:nth-child(odd) { background: rgba(255, 255, 255, 0.02); }
+.theme-nuit .clsmt__row--me {
+  background: rgba(255, 255, 255, 0.09);
+  outline: 1px solid rgba(255, 255, 255, 0.4);
+}
+.theme-nuit .clsmt__wins,
+.theme-nuit .clsmt__ratio { font-variant-numeric: tabular-nums; }
+
+/* Les émojis d'interface détonneraient dans un rendu strictement monochrome :
+   on les désature au lieu de les masquer, pour ne rien casser. */
+.theme-nuit .nav-btn > span[aria-hidden],
+.theme-nuit .sidebar__logo-icon,
+.theme-nuit .clsmt__rank {
+  filter: grayscale(1) contrast(1.25);
+}
+
+/* --------------------------------------------------------------------------
+   8. Confort de lecture
+   -------------------------------------------------------------------------- */
+
+.theme-nuit ::-webkit-scrollbar { width: 9px; height: 9px; }
+.theme-nuit ::-webkit-scrollbar-track { background: #000; }
+.theme-nuit ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 0;
+}
+.theme-nuit ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.32); }
+
+.theme-nuit ::selection { background: #fff; color: #000; }
+
+/* Le nuage de points est décoratif : on le coupe si l'on a demandé moins
+   d'animations, sans rien retirer d'autre au thème. */
+@media (prefers-reduced-motion: reduce) {
+  .nuit-fond { display: none; }
+}
