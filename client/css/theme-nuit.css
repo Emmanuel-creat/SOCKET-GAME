@@ -649,7 +649,20 @@
    jamais en inversant le contraste.
    ========================================================================== */
 
-.theme-nuit,
+/*
+ * ⚠️ NE JAMAIS écrire `color: inherit` ici. `.theme-nuit` est posé sur <html>,
+ * la racine du document : « hériter » n'y a aucun sens, le navigateur retombe
+ * donc sur sa valeur par défaut… qui est le NOIR. Tous les descendants
+ * héritaient alors de ce noir, et le site entier devenait illisible sur fond
+ * sombre. On pose une couleur EXPLICITE.
+ */
+.theme-nuit {
+  color: var(--text);
+}
+
+/* Tout ce qui pourrait porter une couleur propre est ramené au blanc cassé.
+ * On vise large volontairement : sur fond noir, un texte oublié en couleur
+ * sombre est invisible, pas discret. */
 .theme-nuit body,
 .theme-nuit button,
 .theme-nuit input,
@@ -670,8 +683,7 @@
 .theme-nuit h2,
 .theme-nuit h3,
 .theme-nuit h4 {
-  /* Plancher de luminosité : jamais en dessous du gris moyen. */
-  color: inherit;
+  color: var(--text);
 }
 
 /*
