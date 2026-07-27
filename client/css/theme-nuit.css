@@ -74,7 +74,9 @@
   --text-faint: #565656;
 
   --shadow-card: 0 0 0 1px rgba(255, 255, 255, 0.06);
-  --shadow-glow: none;
+  /* Une lueur douce autour des surfaces : c'est ce qui donne le côté futuriste
+     tamisé, sans jamais éclairer franchement. */
+  --shadow-glow: 0 0 34px rgba(255, 255, 255, 0.045);
 }
 
 /* --------------------------------------------------------------------------
@@ -84,12 +86,11 @@
    grille et le grain, purement en CSS.
    -------------------------------------------------------------------------- */
 
+/* Du noir, rien d'autre : toute la lumière vient du canevas posé par-dessus.
+   Pas de grille ni de trame — l'effet recherché est un noir profond parcouru
+   de halos, pas un fond technique. */
 .theme-nuit body {
-  background:
-    /* fines lignes de repère, comme sur un relevé */
-    repeating-linear-gradient(to right, rgba(255, 255, 255, 0.028) 0 1px, transparent 1px 92px),
-    repeating-linear-gradient(to bottom, rgba(255, 255, 255, 0.028) 0 1px, transparent 1px 92px),
-    #000;
+  background: #000;
 }
 
 /* Le halo coloré d'origine n'a plus sa place ici. */
@@ -163,7 +164,7 @@
   background: rgba(255, 255, 255, 0.022);
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 3px;
-  box-shadow: none;
+  box-shadow: 0 0 26px rgba(255, 255, 255, 0.035), inset 0 1px 0 rgba(255, 255, 255, 0.05);
   position: relative;
 }
 
