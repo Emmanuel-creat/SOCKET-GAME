@@ -321,13 +321,18 @@
    une bordure serait uniforme, alors qu'un vrai reflet ne l'est jamais.
    ========================================================================== */
 
+/*
+ * ⚠️ `.modal` et `.chat` sont VOLONTAIREMENT absents de cette liste : ils
+ * doivent pouvoir DÉFILER (`overflow-y: auto` dans components.css). Leur poser
+ * `overflow: hidden` pour découper le reflet bloquerait le défilement — c'est
+ * exactement ce qui rendait les Paramètres et le salon inutilisables quand le
+ * contenu dépassait. Ils reçoivent le verre plus bas, sans le découpage.
+ */
 .theme-nuit .card,
 .theme-nuit .panel,
-.theme-nuit .modal,
 .theme-nuit .game-card,
 .theme-nuit .cc__panel,
-.theme-nuit .sc__panneau,
-.theme-nuit .chat {
+.theme-nuit .sc__panneau {
   position: relative;
   border: none;
   border-radius: 18px;
@@ -410,6 +415,49 @@
 .theme-nuit .card:hover::after,
 .theme-nuit .panel:hover::after,
 .theme-nuit .game-card:hover::after { transform: rotate(18deg) translateX(340%); }
+
+
+/*
+ * Verre pour les conteneurs qui doivent défiler : mêmes matière et arête, mais
+ * PAS de `overflow: hidden` ni de reflet balayé (le reflet a besoin du
+ * découpage pour ne pas déborder). On garde donc l'essentiel de l'effet sans
+ * jamais toucher au défilement.
+ */
+.theme-nuit .modal,
+.theme-nuit .chat,
+.theme-nuit .chat__messages,
+.theme-nuit .room-main,
+.theme-nuit .views {
+  scrollbar-width: thin;
+}
+
+.theme-nuit .modal,
+.theme-nuit .chat {
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 18px;
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.075) 0%, rgba(255, 255, 255, 0.018) 42%, rgba(255, 255, 255, 0.045) 100%),
+    rgba(12, 12, 14, 0.92);
+  backdrop-filter: blur(14px) saturate(115%);
+  -webkit-backdrop-filter: blur(14px) saturate(115%);
+  box-shadow:
+    0 10px 34px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  /* overflow VOLONTAIREMENT non déclaré : voir l'avertissement plus haut. */
+}
+
+/*
+ * Garde-fou général : quoi qu'il arrive, ce qui est prévu pour défiler doit
+ * pouvoir défiler. Ces règles passent après tout le reste du thème.
+ */
+.theme-nuit .modal { overflow-y: auto; }
+.theme-nuit .chat__messages { overflow-y: auto; }
+.theme-nuit .room-main { overflow-y: auto; }
+.theme-nuit .views { overflow-y: auto; }
+.theme-nuit .cc__side,
+.theme-nuit .lounge-roster-card,
+.theme-nuit .lounge-roster { overflow-y: auto; }
 
 /* --------------------------------------------------------------------------
    10. Boutons de verre — pilules à arête lumineuse

@@ -1,0 +1,105 @@
+/* ==========================================================================
+   Correctifs de défilement — salon et fenêtres modales
+
+   Symptôme corrigé : dans le Salon et dans les Paramètres, la page n'était pas
+   affichée en entier ET le défilement était bloqué. Impossible d'atteindre le
+   bas du contenu.
+
+   Feuille SÉPARÉE, comme convenu : on ne réécrit pas views.css ni
+   components.css, qui évoluent de leur côté.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Les fenêtres modales (Paramètres, Profil, Quitter…)
+
+   `.modal` prévoit `max-height: 85vh; overflow-y: auto`, ce qui est correct.
+   Mais sur un écran bas, 85 % de la hauteur laisse si peu de place que le
+   contenu déborde quand même, et certains styles de thème pouvaient écraser
+   le défilement. On sécurise les deux.
+   -------------------------------------------------------------------------- */
+
+.modal {
+  /* `dvh` suit la barre d'adresse des navigateurs mobiles, contrairement à
+     `vh` qui compte une hauteur que l'on n'a pas réellement. */
+  max-height: 85vh;
+  overflow-y: auto !important;
+  /* Le défilement s'arrête à la fenêtre au lieu de gagner la page derrière. */
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+@supports (height: 100dvh) {
+  .modal { max-height: 85dvh; }
+}
+
+/* Le voile autour de la fenêtre doit pouvoir défiler lui aussi : si la fenêtre
+   est plus haute que l'écran, c'est le voile qui prend le relais. */
+.modal-overlay,
+.overlay {
+  overflow-y: auto;
+  padding: 16px;
+}
+
+/* --------------------------------------------------------------------------
+   2. Le salon
+
+   `.room-layout` imposait une hauteur FIGÉE (`calc(100vh - 174px)`) doublée
+   d'un `min-height: 420px`. Sur un écran bas — mobile en paysage, fenêtre
+   réduite — c'est le minimum qui l'emporte : le bloc devient plus haut que la
+   place disponible et son bas devient inatteignable.
+
+   On remplace la hauteur imposée par une hauteur SOUHAITÉE : le salon occupe
+   l'espace s'il y en a, et se laisse comprimer sinon.
+   -------------------------------------------------------------------------- */
+
+.room-layout {
+  height: auto;
+  min-height: 0;
+  /* On vise la hauteur disponible sans jamais l'imposer. */
+  max-height: none;
+}
+
+@media (min-height: 620px) {
+  /* Écran assez haut : on retrouve le confort des colonnes pleine hauteur. */
+  .room-layout {
+    height: calc(100vh - 64px - 110px);
+    min-height: 420px;
+  }
+  @supports (height: 100dvh) {
+    .room-layout { height: calc(100dvh - 64px - 110px); }
+  }
+}
+
+/* En dessous, la mise en page s'empile et la page défile normalement. */
+@media (max-height: 619px), (max-width: 900px) {
+  .room-layout {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+  .room-side { grid-template-rows: auto auto; }
+  .room-side .chat { min-height: 240px; }
+}
+
+/* Les colonnes gardent leur défilement propre quand elles en ont un. */
+.room-main,
+.room-side { min-height: 0; }
+
+/* --------------------------------------------------------------------------
+   3. Garde-fou général
+
+   La zone des vues doit TOUJOURS pouvoir défiler : c'est le dernier recours
+   quand un contenu dépasse. `body` est en `overflow: hidden` (voulu, pour que
+   la mise en page tienne l'écran), donc si `.views` ne défile pas, plus rien
+   ne défile.
+   -------------------------------------------------------------------------- */
+
+.views {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Sur un écran bas, on récupère de la place en réduisant les marges. */
+@media (max-height: 560px) {
+  .views { padding: var(--gap-m); }
+}
