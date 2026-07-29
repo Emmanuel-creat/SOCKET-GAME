@@ -29,7 +29,12 @@ export const CUBE_RAYON = 0.55;
 // qui donne toute la vitesse. Réduit de 25 % (5,2 → 3,9) pour accentuer ce
 // contraste — la marche sert à se placer, le ressort à agir.
 const VITESSE_MARCHE = 3.9;                // unités/seconde
-const FROTTEMENT = 6.5;                    // décélération quand on ne pousse plus
+// Décélération quand on ne pousse plus. Doublée (6,5 → 13) pour diviser la
+// glisse par deux : on freine deux fois plus vite, donc on dérape deux fois
+// moins loin. On agit ici plutôt que sur chaque sol, ce qui préserve leurs
+// différences relatives (la glace reste la plus traître, le sable le plus
+// freinant) tout en rendant l'ensemble bien plus maniable.
+const FROTTEMENT = 13;
 const VITESSE_MAX = 26;
 
 // Ressort.
@@ -47,7 +52,11 @@ const REBOND_MUTUEL = 1.35;                // deux ressorts qui se percutent
 // gain après un choc. La lave élimine.
 export const SOLS = Object.freeze({
   herbe:      { nom: 'Herbe',      emoji: '🟩', impulsion: 1,    friction: 1,    rebond: 1,    mortel: false },
-  glace:      { nom: 'Glace',      emoji: '🟦', impulsion: 1,    friction: 0.12, rebond: 1,    mortel: false },
+  // Friction relevée de 0,12 à 0,2 : le doublement du frottement général n'avait
+  // presque aucune prise sur une valeur aussi basse (−27 % seulement, contre
+  // −50 % ailleurs). Avec 0,2, la glace glisse bien deux fois moins qu'avant —
+  // et reste de loin le sol le plus traître, ce qui est son rôle.
+  glace:      { nom: 'Glace',      emoji: '🟦', impulsion: 1,    friction: 0.2,  rebond: 1,    mortel: false },
   sable:      { nom: 'Sable',      emoji: '🟨', impulsion: 0.62, friction: 1.8,  rebond: 1,    mortel: false },
   caoutchouc: { nom: 'Caoutchouc', emoji: '🟪', impulsion: 1,    friction: 1,    rebond: 1.55, mortel: false },
   metal:      { nom: 'Métal',      emoji: '⬛', impulsion: 1.3,  friction: 0.75, rebond: 1,    mortel: false },

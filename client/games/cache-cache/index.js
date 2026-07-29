@@ -925,25 +925,59 @@ class CacheCacheUI {
       type: 'button', className: 'btn btn--ghost btn--small',
       onClick: () => { fgCtx.clearRect(0, 0, MODAL_SIZE, MODAL_SIZE); buildSilhouettePath(fgCtx, ccx, ccy, r); fgCtx.save(); fgCtx.clip(); fgCtx.fillStyle = this.myColor; fgCtx.fillRect(0, 0, MODAL_SIZE, MODAL_SIZE); fgCtx.restore(); },
     }, '🗑️ Effacer');
-    const cancelBtn = h('button', { type: 'button', className: 'btn btn--ghost', onClick: () => overlay.remove() }, '✖️ Annuler');
-    const validateBtn = h('button', {
-      type: 'button', className: 'btn btn--primary',
-      onClick: () => {
+    const cancelBtn = h('button', { type: 'button', className: 'btn btn--ghost', onClick: () => this._fermerDessin?.() }, '✖️ Annuler');
+    /*
+     * Enregistre le camouflage. Extrait du bouton pour être réutilisable :
+     * c'est aussi ce qui est appelé quand le temps s'épuise, afin de ne JAMAIS
+     * perdre le dessin en cours (avant, la fenêtre se fermait sans rien
+     * enregistrer et le joueur se retrouvait tout blanc).
+     */
+    const enregistrer = () => {
         const small = document.createElement('canvas');
         small.width = 110; small.height = 110;
         small.getContext('2d').drawImage(fgCanvas, 0, 0, 110, 110);
         const dataUrl = small.toDataURL('image/png');
         this.myTexture = dataUrl;
         this.act({ a: 'updateHiderState', patch: { texture: dataUrl } });
-        overlay.remove();
+        this._fermerDessin?.();
         this.redrawHideStage();
         const swatch = this.root.querySelector('.cc__colorswatch');
         if (swatch) swatch.style.cssText = `background:center/cover no-repeat url(${dataUrl});`;
-      },
+    };
+
+    const validateBtn = h('button', {
+      type: 'button', className: 'btn btn--primary', onClick: enregistrer,
     }, '✅ Valider');
 
+    /*
+     * Minuteur : le joueur dessine à l'aveugle sans savoir combien de temps il
+     * lui reste, alors que la phase de cachette est chronométrée. On affiche
+     * donc le décompte À CÔTÉ de la zone de dessin, et surtout on ENREGISTRE
+     * automatiquement à l'expiration.
+     */
+    const minuteurEl = h('div', { className: 'cc__draw-timer' }, '');
+    const majMinuteur = () => {
+      const fin = this.view?.phaseDeadline;
+      if (!fin) { minuteurEl.textContent = ''; return; }
+      const reste = fin - Date.now();
+      minuteurEl.textContent = `⏱️ ${fmtCountdown(reste)}`;
+      minuteurEl.classList.toggle('cc__draw-timer--urgent', reste <= 15000);
+      if (reste <= 0) {
+        // Temps écoulé : on enregistre ce qui est dessiné plutôt que de fermer
+        // sur un camouflage vide.
+        clearInterval(tickMinuteur);
+        enregistrer();
+        this.setStatus('⏱️ Temps écoulé : ton camouflage a été enregistré.');
+      }
+    };
+    const tickMinuteur = setInterval(majMinuteur, 250);
+    majMinuteur();
+
     const overlay = h('div', { className: 'cc__modal-overlay' }, h('div', { className: 'cc__modal cc__draw-modal' }, [
-      h('h3', {}, '🖌️ Dessine ton camouflage'),
+      h('div', { className: 'cc__draw-head' }, [
+        h('h3', {}, '🖌️ Dessine ton camouflage'),
+        minuteurEl,
+      ]),
       h('p', { className: 'cc__hint' }, 'Le fond montre le décor autour de toi : dessine directement sur ton personnage pour t\'y fondre.'),
       h('div', { className: 'cc__draw-stage', style: `width:${MODAL_SIZE}px;height:${MODAL_SIZE}px;` }, [bgCanvas, fgCanvas]),
       h('div', { className: 'cc__draw-tools' }, [
@@ -953,7 +987,10 @@ class CacheCacheUI {
       ]),
       h('div', { className: 'cc__draw-actions' }, [cancelBtn, validateBtn]),
     ]));
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    // Le minuteur doit s'arrêter quelle que soit la façon dont on ferme.
+    const fermer = () => { clearInterval(tickMinuteur); overlay.remove(); };
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) fermer(); });
+    this._fermerDessin = fermer;
     this.root.append(overlay);
   }
 
@@ -1212,6 +1249,13 @@ const CSS = `
 .cc__draw-colorinput{ width:36px; height:36px; padding:0; border:none; border-radius:8px; background:none; cursor:pointer; }
 .cc__draw-sizelabel{ display:flex; align-items:center; gap:6px; font-size:.78rem; color:var(--text-dim,#aab); }
 .cc__draw-actions{ display:flex; gap:10px; }
+.cc__draw-head{ display:flex; align-items:center; justify-content:space-between; gap:14px; width:100%; }
+.cc__draw-head h3{ margin:0; }
+/* Le décompte est posé à côté de la zone de dessin : le joueur y est concentré
+   et ne regarde pas le bandeau du haut. */
+.cc__draw-timer{ font-variant-numeric:tabular-nums; font-weight:800; font-size:1rem; padding:4px 12px; border-radius:999px; background:rgba(0,0,0,.4); border:1px solid var(--glass-border,rgba(255,255,255,.14)); white-space:nowrap; }
+.cc__draw-timer--urgent{ color:#ff6b6b; border-color:rgba(255,107,107,.6); animation:cc-timer-pulse 1s ease-in-out infinite; }
+@keyframes cc-timer-pulse{ 0%,100%{ transform:scale(1); } 50%{ transform:scale(1.07); } }
 
 @media (max-width:1000px){
   .cc__layout{ grid-template-columns:1fr; }

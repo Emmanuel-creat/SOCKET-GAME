@@ -12,6 +12,8 @@
  * aucun clic.
  */
 
+import { bus } from '../core/EventBus.js';
+
 const CLE = 'arcade:theme-nuit';
 
 /* ------------------------------------------------------------------ */
@@ -251,6 +253,13 @@ function appliquer(actif, bouton) {
   }
 }
 
+/*
+ * Vues où la lune a sa place : les écrans de menu. On l'exclut du Salon et
+ * d'une partie en cours — là, le coin haut-droit est occupé par les boutons de
+ * la vue (quitter, réglages…) et la lune venait se superposer à eux.
+ */
+const VUES_AVEC_LUNE = new Set(['play', 'rooms', 'players', 'classement', 'lounge']);
+
 export function initThemeNuit() {
   initOnde();
   const zone = document.getElementById('views');
@@ -265,6 +274,15 @@ export function initThemeNuit() {
     appliquer(actif, bouton);
   });
   zone.append(bouton);
+
+  // Affichage conditionnel : on suit la navigation plutôt que de tester une
+  // seule fois au démarrage, puisque l'utilisateur change de vue en permanence.
+  const majVisibilite = (vue) => { bouton.hidden = !VUES_AVEC_LUNE.has(vue); };
+  bus.on('view:changed', majVisibilite);
+  // État de départ : on lit la vue réellement affichée.
+  const vues = document.querySelectorAll?.('[data-view-name]') ?? [];
+  const vueActive = [...vues].find((v) => !v.hidden)?.dataset?.viewName;
+  majVisibilite(vueActive ?? 'play');
 
   appliquer(lire(), bouton);
 }

@@ -500,6 +500,9 @@ height:100%;min-height:520px;max-height:100%}
 .gp__sub{font-size:12px;opacity:.7;padding:3px 9px;border-radius:20px;background:var(--gp-deep);border:1px solid var(--gp-border)}
 .gp__timer{font-variant-numeric:tabular-nums;font-weight:800;font-size:18px;padding:3px 10px;border-radius:8px;background:var(--gp-deep);border:1px solid var(--gp-border)}
 .gp__timer.gp--low{color:#ff6b6b;border-color:#ff6b6b;animation:gppulse 1s infinite}
+.gp-instr--avec-timer{display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap}
+.gp-timer-proche{font-variant-numeric:tabular-nums;font-weight:800;font-size:15px;padding:2px 10px;border-radius:999px;background:var(--gp-deep);border:1px solid var(--gp-border);white-space:nowrap}
+.gp-timer-proche.gp--low{color:#ff6b6b;border-color:#ff6b6b;animation:gppulse 1s infinite}
 @keyframes gppulse{50%{opacity:.45}}
 .gp__stage{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;align-items:center;gap:12px}
 .gp-instr{font-size:15px;text-align:center;max-width:640px}
@@ -834,6 +837,7 @@ export class GarticUI {
       this.locked = !!view.locked;
       this.autoSubmitted = false;
       if (this.draw) { this.draw.destroy(); this.draw = null; }
+      this.timerDessinEl = null;
       this.inputEl = null;
       this.renderPhase(view);
       this.scheduleAuto(view);
@@ -920,8 +924,17 @@ export class GarticUI {
     const undoBtn = h('button', { className: 'gp-tool', onClick: () => this.draw.undo() }, '↶ Annuler');
     const clearBtn = h('button', { className: 'gp-tool', onClick: () => this.draw.clear() }, '🗑 Tout effacer');
 
+    /*
+     * Décompte rapproché : le minuteur du bandeau est trop loin du regard quand
+     * on dessine. On en pose une copie juste au-dessus de la zone de dessin —
+     * c'est le même chrono, simplement affiché là où l'attention se trouve.
+     */
+    this.timerDessinEl = h('span', { className: 'gp-timer-proche' }, '');
     this.stage.replaceChildren(
-      h('div', { className: 'gp-instr' }, 'Dessine ceci :'),
+      h('div', { className: 'gp-instr gp-instr--avec-timer' }, [
+        h('span', {}, 'Dessine ceci :'),
+        this.timerDessinEl,
+      ]),
       h('div', { className: 'gp-prompt-box' }, prompt || '(phrase manquante)'),
       this.draw.canvas,
       h('div', { className: 'gp-toolbar' }, [swatches, sizeRow, this.eraserBtn, undoBtn, clearBtn]),
@@ -1053,9 +1066,25 @@ export class GarticUI {
     const render = () => {
       const rem = Math.max(0, (this.view.phaseEndsAt || 0) - Date.now());
       const s = Math.ceil(rem / 1000);
-      this.timerEl.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+      const texte = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+      this.timerEl.textContent = texte;
       this.timerEl.classList.toggle('gp--low', s <= 20);
-      if (rem <= 0) clearInterval(this.timers.tick);
+      // Copie près de la zone de dessin, si elle est affichée.
+      if (this.timerDessinEl) {
+        this.timerDessinEl.textContent = `⏱️ ${texte}`;
+        this.timerDessinEl.classList.toggle('gp--low', s <= 20);
+      }
+      if (rem <= 0) {
+        clearInterval(this.timers.tick);
+        /*
+         * Filet de sécurité : `scheduleAuto` ne programme la validation qu'au
+         * CHANGEMENT de phase. Si le minuteur a été reprogrammé, décalé, ou si
+         * l'on est arrivé en cours de phase, ce rendez-vous unique peut ne
+         * jamais arriver — et le dessin partait vide. Ici on vérifie à chaque
+         * tick : dès que le temps est écoulé, on envoie ce qui est dessiné.
+         */
+        if (!this.locked && PHASES.includes(this.view?.phase)) this.submitPhase();
+      }
     };
     render();
     this.timers.tick = setInterval(render, 250);
