@@ -38,6 +38,16 @@
 
 .lune-btn svg { width: 24px; height: 24px; display: block; }
 
+/*
+ * ⚠️ CEINTURE INDISPENSABLE. L'attribut `hidden` ne fait que poser
+ * `display: none` via la feuille par DÉFAUT du navigateur : n'importe quelle
+ * règle `display` explicite — ici `display: grid` juste au-dessus — l'emporte,
+ * et le bouton reste affiché quoi que fasse le JavaScript.
+ * C'est le piège déjà rencontré sur le menu mobile. Sans cette règle, masquer
+ * la lune hors du menu ne fonctionne tout simplement pas.
+ */
+.lune-btn[hidden] { display: none !important; }
+
 /* La zone des vues devient le repère de position du bouton. */
 .views { position: relative; }
 

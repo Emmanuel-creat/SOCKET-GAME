@@ -25,16 +25,18 @@ export const ARENE_RAYON = 15;             // rayon de départ, en unités de je
 export const CUBE_RAYON = 0.55;
 
 // Déplacement.
-// Déplacement volontairement posé : on avance lentement, et c'est le ressort
-// qui donne toute la vitesse. Réduit de 25 % (5,2 → 3,9) pour accentuer ce
-// contraste — la marche sert à se placer, le ressort à agir.
-const VITESSE_MARCHE = 3.9;                // unités/seconde
-// Décélération quand on ne pousse plus. Doublée (6,5 → 13) pour diviser la
-// glisse par deux : on freine deux fois plus vite, donc on dérape deux fois
-// moins loin. On agit ici plutôt que sur chaque sol, ce qui préserve leurs
-// différences relatives (la glace reste la plus traître, le sable le plus
-// freinant) tout en rendant l'ensemble bien plus maniable.
-const FROTTEMENT = 13;
+// Vitesse de MARCHE, divisée par deux (3,9 → 1,95). On avance posément : la
+// marche sert à se placer, le ressort à agir. Le rapport entre les deux passe
+// à 9× — chaque détente est d'autant plus spectaculaire.
+//
+// ⚠️ Ne concerne QUE le déplacement volontaire. Le frottement, l'impulsion et
+// les forces de poussée sont inchangés : une projection se comporte donc
+// exactement comme avant.
+const VITESSE_MARCHE = 1.95;                // unités/seconde
+// Décélération quand on ne pousse plus. Valeur D'ORIGINE rétablie : c'est elle
+// qui détermine la distance parcourue après une poussée, et les projections
+// doivent se comporter exactement comme avant.
+const FROTTEMENT = 6.5;
 const VITESSE_MAX = 26;
 
 // Ressort.
@@ -52,11 +54,7 @@ const REBOND_MUTUEL = 1.35;                // deux ressorts qui se percutent
 // gain après un choc. La lave élimine.
 export const SOLS = Object.freeze({
   herbe:      { nom: 'Herbe',      emoji: '🟩', impulsion: 1,    friction: 1,    rebond: 1,    mortel: false },
-  // Friction relevée de 0,12 à 0,2 : le doublement du frottement général n'avait
-  // presque aucune prise sur une valeur aussi basse (−27 % seulement, contre
-  // −50 % ailleurs). Avec 0,2, la glace glisse bien deux fois moins qu'avant —
-  // et reste de loin le sol le plus traître, ce qui est son rôle.
-  glace:      { nom: 'Glace',      emoji: '🟦', impulsion: 1,    friction: 0.2,  rebond: 1,    mortel: false },
+  glace:      { nom: 'Glace',      emoji: '🟦', impulsion: 1,    friction: 0.12, rebond: 1,    mortel: false },
   sable:      { nom: 'Sable',      emoji: '🟨', impulsion: 0.62, friction: 1.8,  rebond: 1,    mortel: false },
   caoutchouc: { nom: 'Caoutchouc', emoji: '🟪', impulsion: 1,    friction: 1,    rebond: 1.55, mortel: false },
   metal:      { nom: 'Métal',      emoji: '⬛', impulsion: 1.3,  friction: 0.75, rebond: 1,    mortel: false },

@@ -103,3 +103,50 @@
 @media (max-height: 560px) {
   .views { padding: var(--gap-m); }
 }
+
+/* --------------------------------------------------------------------------
+   4. La colonne droite du salon (joueurs + chat)
+
+   Cause réelle du « scroll impossible » signalé. `.room-side` est une grille
+   `auto 1fr` SANS overflow :
+     - ligne 1, le panneau des joueurs, prend toute la hauteur de son contenu ;
+     - ligne 2, le chat, se contente de ce qui reste.
+
+   Avec beaucoup de joueurs, le panneau dépasse la colonne : le chat est écrasé
+   à zéro, le bas déborde, et rien ne peut défiler. Mesuré sur un portable
+   (768 px) : à 12 joueurs, 54 px hors écran ; à 16 joueurs, 230 px.
+
+   On borne donc le panneau des joueurs — qui défile alors sur lui-même — et on
+   garantit une hauteur minimale au chat.
+   -------------------------------------------------------------------------- */
+
+.room-side {
+  min-height: 0;
+  overflow-y: auto;          /* filet : si tout déborde malgré tout, ça défile */
+  overscroll-behavior: contain;
+}
+
+/* Le panneau des joueurs ne mange plus toute la colonne. */
+.room-side > .card:first-child,
+.room-side .players-panel {
+  max-height: 45%;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Le chat garde toujours de quoi être utilisable. */
+.room-side .chat {
+  min-height: 220px;
+  min-width: 0;
+}
+
+/* En dessous de 1000 px, la mise en page s'empile déjà : le panneau reprend sa
+   hauteur naturelle et c'est la page qui défile. */
+@media (max-width: 1000px) {
+  .room-side { overflow: visible; }
+  .room-side > .card:first-child,
+  .room-side .players-panel { max-height: none; }
+  .room-main { overflow: visible; }
+  .room-layout { height: auto; }
+}

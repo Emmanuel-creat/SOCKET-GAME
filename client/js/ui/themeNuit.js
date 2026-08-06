@@ -277,7 +277,19 @@ export function initThemeNuit() {
 
   // Affichage conditionnel : on suit la navigation plutôt que de tester une
   // seule fois au démarrage, puisque l'utilisateur change de vue en permanence.
-  const majVisibilite = (vue) => { bouton.hidden = !VUES_AVEC_LUNE.has(vue); };
+  /*
+   * Double sécurité. `hidden` seul ne suffit pas : une règle `display`
+   * explicite l'emporte sur la feuille par défaut du navigateur (c'est ce qui
+   * laissait la lune visible par-dessus « Quitter le salon »). On pose donc
+   * l'attribut ET on retire réellement le bouton du document — ainsi le
+   * masquage tient même si la feuille de style n'est pas chargée.
+   */
+  const majVisibilite = (vue) => {
+    const visible = VUES_AVEC_LUNE.has(vue);
+    bouton.hidden = !visible;
+    if (visible) { if (!bouton.parentNode) zone.append(bouton); }
+    else bouton.remove();
+  };
   bus.on('view:changed', majVisibilite);
   // État de départ : on lit la vue réellement affichée.
   const vues = document.querySelectorAll?.('[data-view-name]') ?? [];
