@@ -254,7 +254,11 @@ class LastShotUI {
 
     if (this.engine.dirty || before !== after) {
       // Vue PERSONNELLE par joueur (positions adverses masquées en préparation).
-      for (const p of this.players) {
+      // ⚠️ `this.ctx.players` et non `this.players` : la classe ne définit pas
+      // de propriété `players`. L'écrire sans `ctx` levait un TypeError dès le
+      // premier battement de la boucle Host — soit 70 ms après le montage,
+      // avant même l'écran de choix du mode : le jeu ne démarrait plus du tout.
+      for (const p of this.ctx.players) {
         if (p.id === this.me.id) continue;
         this.ctx.sendMessage({ t: 'state', state: this.engine.getViewFor(p.id, now) }, p.id);
       }
