@@ -1,0 +1,133 @@
+; ============================================================================
+;  Devil Level — catalogue des cartes
+;  Ce fichier est une RESSOURCE : le moteur y pioche par NOM. Pour ajouter un
+;  niveau, il suffit de l'écrire ici — aucun code à toucher, aucun rebuild.
+; ============================================================================
+;
+;  FORMAT
+;    [Nom de la carte]       ← démarre une nouvelle carte (le nom sert de clé)
+;    @theme prairie          ← facultatif : prairie, crepuscule, glacier,
+;                              volcan, nuit, bonbon
+;    @auteur Nathan          ← facultatif, purement informatif
+;    (puis la matrice, ligne par ligne, jusqu'à la carte suivante)
+;
+;  Une ligne commençant par « ; » est un commentaire et n'est jamais lue.
+;  Attention : « # » et « = » sont des BLOCS — ils ne peuvent servir ni de
+;  commentaire ni de marqueur, sinon une rangée de terrain passerait pour un titre.
+;
+;  CONVENTIONS
+;    - la PREMIÈRE ligne de la matrice est le HAUT du niveau ;
+;    - les lignes peuvent être de longueurs différentes ;
+;    - l'espace et le point valent « vide » (le point aide à compter) ;
+;    - « P » (départ) et « D » (sortie) sont OBLIGATOIRES ;
+;    - les lignes vides à l'intérieur d'une matrice sont des rangées d'air et
+;      comptent ; celles du début et de la fin sont ignorées.
+;
+;  LÉGENDE
+;    TERRAIN   # bloc     = plateforme   Z fuyante    r faux sol
+;              b cassable i invisible    c glace      s collant
+;              o mou      w temporisé    B trampoline l échelle
+;              M plateforme mobile (horizontale)  V (verticale)
+;    DANGERS   ^ pics     * scie         ! laser      T écraseur
+;              ~ lave     x bloc explosif
+;    SABOTAGE  O plaque   | bloc armé (tombe sur ceux qui suivent)
+;    PARCOURS  P départ   K checkpoint   D sortie     t téléporteur (par paires)
+;              g inversion de gravité
+;    BONUS     C aléatoire
+;              1 dash  2 double saut  3 bouclier  4 ghost
+;              5 vitesse  6 gel  7 tornade  8 bombe
+;              (alias hérités : W = double saut, S = ghost, H = bouclier,
+;               Q = bombe)
+;
+; ============================================================================
+
+
+[Échauffement]
+@theme prairie
+@auteur Manu
+
+                     3                          2
+              ===        ===          ===              ===
+        C              K                    C                    K            1
+   P                                                                                 D
+#########    #####   #########    ####    #########    #######    ##########   #########
+#########    #####   #########    ####    #########    #######    ##########   #########
+#########^^^^#####^^^#########^^^^####^^^^#########^^^^#######^^^^##########^^^#########
+
+
+[La Fonderie]
+@theme crepuscule
+@auteur Manu
+
+            !            !                    !                     !
+            !            !                    !                     !
+     4      !     C      !        5           !          8          !            2
+            !            !                    !                     !
+   ==       !    ===     !      =====         !       ===           !        ====
+            !            !                    !                     !
+        K        *              K         *              K      *
+ P                                                                                     D
+#####  ####   ######   ####    #######   ####     ######   ####    #######    ###   #######
+#####~~####~~~######~~~####~~~~#######~~~####~~~~~######~~~####~~~~#######~~~~###~~~#######
+
+
+[Le Piège]
+@theme nuit
+@auteur Manu
+
+            |                      |                          |
+
+      6           7          C            3          8              4         5
+
+    ===       Z Z Z      ====        Z Z Z       ======       Z Z Z        =====
+
+   K      O            K       O            K        O               K
+ P                                                                                   D
+########   ######   #######   ######   ########   ######   #########   ######   ########
+########^^^######^^^#######^^^######^^^########^^^######^^^#########^^^######^^^########
+
+
+[Nathan's room]
+@theme glacier
+@auteur Nathan
+
+                                                                              D
+                                                              ====        =====
+                              4                   B                 ccc
+                    ===                   ===
+         C                        K                    C             K          8
+    ===         BB          ===        ccccc       ===
+ P        ^^^         ^^^^        ^^^         ^^^^        ^^^              ^^^
+######  #####  ######  ######  #####  #######  ######  ######  ##########  ##########
+
+
+[La Grande Chute]
+@theme volcan
+@auteur Manu
+
+  P                                                                     D
+#####       t                                                   t   #########
+#####                                                               #########
+   =====        ===                                       ====      #########
+                              ===         ===
+      3        K      C               K            5            2
+   ======      =======        =====     ======        =======
+        ^^^^        ^^^^^         ^^^^       ^^^^^         ^^^^
+#########  #########  #########  #########  #########  #########  ##########
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+[Le Toboggan]
+@theme bonbon
+@auteur Manu
+
+ P                                                                            D
+####                                                                      ######
+####   1                                                            7     ######
+####=====                                                          ====   ######
+####          K                                                 K         ######
+####     ==========                                      ==========       ######
+####                    C            4                                    ######
+####            ===========================================               ######
+####       ooo                                              ooo           ######
+####   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^######

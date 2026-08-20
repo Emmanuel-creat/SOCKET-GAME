@@ -18,12 +18,16 @@
  *     changent de manche en manche pour empêcher le pilotage automatique.
  */
 
+import { TUILE, lireCarte, CARTE_SECOURS } from './cartes.js';
+
+export { TUILE };
+
 /* ============================== réglages ============================== */
 
 export const TICK_MS = 33;                 // ~30 Hz de simulation
 
 // Monde : unités de jeu. Le sol de référence est à y = 0, l'axe y monte.
-export const TUILE = 40;
+
 export const JOUEUR_L = 26;
 export const JOUEUR_H = 38;
 
@@ -85,12 +89,48 @@ const VITESSE_BOOST = 1.55;
  * La palette de référence est celle de Hell (#feb854 / #996b07).
  */
 export const THEMES = Object.freeze({
-  hell:            { nom: 'Hell',           air: '#feb854', solide: '#996b07' },
-  'devil-factory': { nom: 'Devil Factory',  air: '#ff9d6b', solide: '#8c3d1e' },
-  'frozen-hell':   { nom: 'Frozen Hell',    air: '#a8e0f5', solide: '#2c6480' },
-  'haunted-castle':{ nom: 'Haunted Castle', air: '#c9b3e8', solide: '#4a3070' },
-  'sky-hell':      { nom: 'Sky Hell',       air: '#bcd9f2', solide: '#3a5f85' },
-  'toy-factory':   { nom: 'Toy Factory',    air: '#ffb3d1', solide: '#a83a68' },
+  prairie: {
+    nom: 'Prairie',
+    cielHaut: '#5fb8f7', cielBas: '#d2feff',
+    collineLoin: '#8ee89a', collinePres: '#6efe8b',
+    herbe: '#adff9c', herbeOmbre: '#7dc934', terre: '#a8f75d', terreJoint: '#7cc836',
+    socle: '#45533c', accent: '#3aa02f',
+  },
+  crepuscule: {
+    nom: 'Crépuscule',
+    cielHaut: '#ff9a5c', cielBas: '#ffe2b0',
+    collineLoin: '#c98a63', collinePres: '#a86544',
+    herbe: '#e0a86a', herbeOmbre: '#a86f3c', terre: '#c98f52', terreJoint: '#96602f',
+    socle: '#4a3320', accent: '#ff7a3d',
+  },
+  glacier: {
+    nom: 'Glacier',
+    cielHaut: '#7cc4ee', cielBas: '#e8f8ff',
+    collineLoin: '#bfe6f5', collinePres: '#9ad3ec',
+    herbe: '#e6f7ff', herbeOmbre: '#8fc4dd', terre: '#c4e4f2', terreJoint: '#8ab8cf',
+    socle: '#33566b', accent: '#4aa8d8',
+  },
+  volcan: {
+    nom: 'Volcan',
+    cielHaut: '#7a2d2a', cielBas: '#ffb27a',
+    collineLoin: '#8a4436', collinePres: '#6b2f26',
+    herbe: '#c9552f', herbeOmbre: '#8a3620', terre: '#a34328', terreJoint: '#732d19',
+    socle: '#3a1a12', accent: '#ff6a2e',
+  },
+  nuit: {
+    nom: 'Nuit',
+    cielHaut: '#1b2450', cielBas: '#5a6ba8',
+    collineLoin: '#3a4676', collinePres: '#2b3358',
+    herbe: '#6a7ec2', herbeOmbre: '#414f88', terre: '#4c5a94', terreJoint: '#35406b',
+    socle: '#161c38', accent: '#8fa4e8',
+  },
+  bonbon: {
+    nom: 'Bonbon',
+    cielHaut: '#ff9ecb', cielBas: '#ffe7f4',
+    collineLoin: '#ffc2de', collinePres: '#ffa3cd',
+    herbe: '#ffd0e6', herbeOmbre: '#e884b4', terre: '#ffbcd9', terreJoint: '#e07aa8',
+    socle: '#7a3358', accent: '#ff6fa5',
+  },
 });
 export const THEMES_IDS = Object.freeze(Object.keys(THEMES));
 
@@ -113,194 +153,63 @@ function chevauche(ax, ay, aw, ah, bx, by, bw, bh) {
   return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
 }
 
-/* ============================== génération du niveau ============================== */
+/* ============================== lecture du niveau ============================== */
+
+/*
+ * Le niveau ne se génère plus : il se LIT dans une matrice de symboles écrite à
+ * la main (voir cartes.js). L'avantage est net — un niveau composé est bien
+ * plus intéressant qu'un tirage aléatoire, et il est reproductible à
+ * l'identique, ce qui sert la mémorisation voulue par le cahier des charges.
+ *
+ * Le repère du monde reste le même que la version précédente : l'axe y MONTE,
+ * l'origine est en bas à gauche. Comme une matrice se lit de haut en bas, on
+ * retourne la coordonnée verticale à la conversion.
+ */
+
+/** Coin bas-gauche, en unités de monde, de la tuile de grille (lx, ly). */
+export function tuileVersMonde(lx, ly, hauteurGrille) {
+  return { x: lx * TUILE, y: (hauteurGrille - 1 - ly) * TUILE };
+}
+
+/** Boîte occupée par une tuile : les `demi` ne remplissent que le bas. */
+export function boiteTuile(t, hauteurGrille) {
+  const { x, y } = tuileVersMonde(t.x, t.y, hauteurGrille);
+  const h = t.def.demi ? TUILE / 2 : TUILE;
+  return { x, y, l: TUILE, h };
+}
 
 /**
- * Construit la route. Elle avance TOUJOURS vers la droite : un seul chemin,
- * comme demandé. La difficulté monte par paliers — les premières sections
- * enseignent, les dernières combinent.
+ * Prépare un niveau lu pour la simulation : on y ajoute l'état mutable de
+ * chaque tuile (cassée, tombée, armée…) que le moteur fera évoluer.
  */
-export function genererNiveau(theme, graine, { longueur = 14 } = {}) {
-  const rng = graineur(graine);
-  const sols = [];        // { x, y, l } plateformes fixes
-  const pieges = [];
-  const bonus = [];
-  const checkpoints = [];
-  const mobiles = [];
-
-  let x = 0;
-  const yBase = 0;
-
-  // Zone de départ : plate et sans danger, on comprend les commandes.
-  sols.push({ x: -160, y: yBase, l: 560 });
-  x = 400;
-
-  const typesParPalier = [
-    ['pics'],
-    ['pics', 'plateforme-fuyante'],
-    ['scie', 'faux-sol', 'plateforme-fuyante'],
-    ['laser', 'scie', 'ecraseur', 'faux-sol'],
-    ['lave', 'laser', 'ecraseur', 'plaque', 'scie'],
-    ['plaque', 'lave', 'laser', 'ecraseur', 'scie', 'plateforme-fuyante'],
-  ];
-
-  for (let i = 0; i < longueur; i += 1) {
-    const avancement = i / longueur;
-    const palier = Math.min(typesParPalier.length - 1, Math.floor(avancement * typesParPalier.length));
-    const choix = typesParPalier[palier];
-    const type = choix[Math.floor(rng() * choix.length)];
-    const largeur = 200 + Math.floor(rng() * 160);
-
-    // Un checkpoint tous les cinq segments : une erreur ne coûte jamais la manche.
-    // Un checkpoint tous les trois segments. Avec un niveau plus court, un
-    // jalon tous les cinq segments n'en laissait que deux sur tout le parcours.
-    if (i > 0 && i % 3 === 0) {
-      // Le checkpoint est posé SUR la surface du sol (épaisseur 18), jamais
-      // dedans : réapparaître sous la surface provoquait une re-collision
-      // immédiate et une boucle de mort dont on ne sortait plus.
-      checkpoints.push({ id: `cp${i}`, x: x - 30, y: yBase + 18, index: checkpoints.length + 1 });
-    }
-
-    if (type === 'lave') {
-      // Fosse de lave franchissable par plateformes : on doit avancer vite.
-      const largeurFosse = 120 + Math.floor(rng() * 90);
-      // La lave affleure le niveau du sol : posée sous lui (y négatif), elle
-      // était invisible ET inatteignable — on mourait de chute avant de la
-      // toucher, ce qui rendait la mort incompréhensible. Elle occupe donc
-      // désormais [yBase - 10, yBase + 26], bien en vue au fond de la fosse.
-      pieges.push({ id: `p${i}`, type: 'lave', x, y: yBase - 10, l: largeurFosse, h: 36 });
-      const nbPlates = 3 + Math.floor(rng() * 2);
-      for (let k = 0; k < nbPlates; k += 1) {
-        mobiles.push({
-          id: `m${i}-${k}`, x: x + 20 + k * (largeurFosse / nbPlates), y: yBase + 10,
-          l: 92, h: 14, amplitude: 34 + rng() * 30, periode: 2400 + rng() * 1400,
-          phase: rng() * Math.PI * 2, axe: rng() < 0.5 ? 'y' : 'x',
-        });
-      }
-      x += largeurFosse;
-      sols.push({ x, y: yBase, l: 130 });
-      x += 130;
-    } else if (type === 'plateforme-fuyante') {
-      // Plateformes qui disparaissent : il faut avancer sans hésiter.
-      const nb = 3 + Math.floor(rng() * 2);
-      for (let k = 0; k < nb; k += 1) {
-        pieges.push({
-          id: `p${i}-${k}`, type: 'fuyante', x: x + k * 92, y: yBase, l: 80, h: 16,
-          delai: 700 + Math.floor(rng() * 260), reapparition: 2200,
-        });
-      }
-      x += nb * 92 + 40;
-      sols.push({ x, y: yBase, l: 140 });
-      x += 140;
-    } else if (type === 'faux-sol') {
-      // Ressemble à du sol, cède à l'atterrissage. Piège de mémorisation.
-      sols.push({ x, y: yBase, l: 70 });
-      pieges.push({ id: `p${i}`, type: 'faux-sol', x: x + 70, y: yBase, l: 90, h: 16, delai: 380, reapparition: 2600 });
-      sols.push({ x: x + 160, y: yBase, l: largeur });
-      x += 160 + largeur;
-    } else {
-      // Segments avec sol continu : le piège est au-dessus ou dedans.
-      sols.push({ x, y: yBase, l: largeur });
-      if (type === 'pics') {
-        const px = x + 60 + rng() * (largeur - 140);
-        pieges.push({ id: `p${i}`, type: 'pics', x: px, y: yBase, l: 56, h: 30, cycle: 1500 + rng() * 900, phase: rng() * 1000, sorti: false });
-      } else if (type === 'scie') {
-        const vertical = rng() < 0.4;
-        pieges.push({
-          id: `p${i}`, type: 'scie', x: x + largeur * 0.4, y: yBase + (vertical ? 20 : 26),
-          l: 44, h: 44, amplitude: vertical ? 92 : 104, periode: 1900 + rng() * 900,
-          phase: rng() * Math.PI * 2, axe: vertical ? 'y' : 'x',
-        });
-      } else if (type === 'laser') {
-        pieges.push({
-          id: `p${i}`, type: 'laser', x: x + largeur * 0.5, y: yBase, l: 14, h: 200,
-          cycle: 2600 + rng() * 900, duree: 480, phase: rng() * 2000,
-        });
-      } else if (type === 'ecraseur') {
-        pieges.push({
-          id: `p${i}`, type: 'ecraseur', x: x + largeur * 0.45, y: yBase + 190,
-          l: 78, h: 52, cycle: 3000 + rng() * 1100, phase: rng() * 1500, chute: 190,
-        });
-      } else if (type === 'plaque') {
-        // Sabotage : le premier qui passe arme un bloc pour ceux de derrière.
-        pieges.push({ id: `p${i}`, type: 'plaque', x: x + 40, y: yBase, l: 60, h: 10, armee: 0, delai: 1400 });
-        pieges.push({ id: `p${i}-bloc`, type: 'bloc-arme', x: x + 150, y: yBase + 200, l: 80, h: 56, lieA: `p${i}`, actif: false, chute: 200 });
-      }
-      x += largeur;
-    }
-
-    /*
-     * Densité croissante. Les paliers font varier le TYPE de piège, mais pas
-     * leur nombre : mesuré sur dix niveaux, sept ne montaient pas en
-     * difficulté — le début était parfois plus chargé que la fin. On ajoute
-     * donc un piège supplémentaire dans la seconde moitié du parcours, ce qui
-     * garantit la progression exigée par le cahier des charges.
-     */
-    if (avancement > 0.5 && type !== 'lave' && type !== 'plateforme-fuyante') {
-      const surplus = avancement > 0.78 ? 2 : 1;
-      for (let k = 0; k < surplus; k += 1) {
-        const px = x - largeur + 70 + rng() * Math.max(40, largeur - 150);
-        if (rng() < 0.5) {
-          pieges.push({
-            id: `s${i}-${k}`, type: 'pics', x: px, y: yBase, l: 48, h: 28,
-            cycle: 1500 + rng() * 800, phase: rng() * 1000,
-          });
-        } else {
-          pieges.push({
-            id: `s${i}-${k}`, type: 'scie', x: px, y: yBase + 24,
-            l: 40, h: 40, amplitude: 80 + rng() * 30, periode: 1900 + rng() * 800,
-            phase: rng() * Math.PI * 2, axe: rng() < 0.5 ? 'x' : 'y',
-          });
-        }
-      }
-    }
-
-    // Un bonus environ un segment sur deux, posé sur la route.
-    if (rng() < 0.55) {
-      bonus.push({
-        id: `b${i}`, type: BONUS_IDS[Math.floor(rng() * BONUS_IDS.length)],
-        x: x - 90 - rng() * 60, y: yBase + 34 + rng() * 46, pris: false, reapparition: 0,
-      });
-    }
-
-    // Petit palier de respiration entre deux sections.
-    sols.push({ x, y: yBase, l: 90 });
-    x += 90;
-  }
-
-  /*
-   * Garde-fou d'espacement : compter les segments ne suffit pas, car leurs
-   * longueurs varient. Un tronçon trop long sans point de reprise transforme
-   * une erreur en acharnement — exactement ce que les checkpoints doivent
-   * éviter. On en intercale donc partout où l'écart dépasse ~900 unités.
-   */
-  const ESPACEMENT_MAX = 900;
-  const jalons = [0, ...checkpoints.map((c) => c.x), x].sort((a, b) => a - b);
-  for (let k = 1; k < jalons.length; k += 1) {
-    const ecart = jalons[k] - jalons[k - 1];
-    if (ecart <= ESPACEMENT_MAX) continue;
-    const combien = Math.floor(ecart / ESPACEMENT_MAX);
-    for (let m = 1; m <= combien; m += 1) {
-      const cx = jalons[k - 1] + (ecart * m) / (combien + 1);
-      // On ne pose un jalon que s'il y a du sol dessous pour l'atteindre.
-      const surSol = sols.some((sl) => cx >= sl.x && cx <= sl.x + sl.l);
-      if (surSol) checkpoints.push({ id: `cpx${k}-${m}`, x: Math.round(cx), y: yBase + 18, index: 0 });
-    }
-  }
-  checkpoints.sort((a, b) => a.x - b.x);
-  checkpoints.forEach((c, i) => { c.index = i + 1; });
-
-  // Ligne d'arrivée.
-  sols.push({ x, y: yBase, l: 320 });
-  const sortie = { x: x + 150, y: yBase, l: 40, h: 90 };
-
+export function preparerNiveau(brut) {
+  const H = brut.hauteur;
+  const tuiles = brut.tuiles.map((t, i) => {
+    const b = boiteTuile(t, H);
+    return {
+      id: `t${i}`, ch: t.ch, def: t.def,
+      lx: t.x, ly: t.y,
+      x: b.x, y: b.y, l: b.l, h: b.h,
+      x0: b.x, y0: b.y,          // position d'origine (les mobiles oscillent autour)
+      etat: null,                 // instant de déclenchement, selon le type
+      cassee: false, revelee: false,
+    };
+  });
+  const conv = (c) => {
+    const m = tuileVersMonde(c.lx, c.ly, H);
+    return { ...c, x: m.x, y: m.y };
+  };
   return {
-    theme, graine, sols, pieges, bonus, checkpoints, mobiles, sortie,
-    longueurTotale: x + 320,
+    ...brut,
+    tuiles,
+    depart: conv(brut.depart),
+    sortie: { ...conv(brut.sortie), l: TUILE, h: TUILE },
+    checkpoints: brut.checkpoints.map(conv).sort((a, b) => a.x - b.x),
+    bonus: brut.bonus.map((b) => ({ ...conv(b), pris: false, reapparition: 0 })),
+    hauteurGrille: H,
   };
 }
 
-/* ============================== moteur ============================== */
 
 export class DevilLevelEngine {
   /**
@@ -314,7 +223,22 @@ export class DevilLevelEngine {
     this.rng = options.rng || Math.random;
     this.horloge = options.now || (() => Date.now());
     this.manchesTotal = borne(Number(options.manches) || MANCHES_DEFAUT, 1, 9);
-    this.themeChoisi = options.theme && THEMES[options.theme] ? options.theme : null;
+    /*
+     * Les cartes jouées. Le Host peut passer ses propres matrices ; à défaut on
+     * prend celles fournies. Une carte invalide est refusée DÈS LA CRÉATION,
+     * avec un message lisible — plutôt qu'en pleine partie.
+     */
+    // Les cartes viennent du catalogue, lu par l'interface : le moteur reste
+    // pur (ni réseau, ni fichiers). Sans carte fournie, on retombe sur celle de
+    // secours plutôt que de refuser de démarrer.
+    const demandees = Array.isArray(options.cartes) && options.cartes.length
+      ? options.cartes
+      : [CARTE_SECOURS];
+    for (const c of demandees) {
+      const v = lireCarte(c);
+      if (!v.ok) throw new Error(`Carte « ${c?.nom ?? '?'} » : ${v.erreur}`);
+    }
+    this.cartes = demandees;
 
     this.joueurs = joueurs.map((j) => ({
       id: j.id, pseudo: j.pseudo ?? '?',
@@ -343,37 +267,44 @@ export class DevilLevelEngine {
 
   demarrerManche() {
     this.manche += 1;
-    const theme = this.themeChoisi ?? THEMES_IDS[Math.floor(this.rng() * THEMES_IDS.length)];
-    // Graine dérivée de la manche : le tracé est reproductible et annonçable.
-    this.graine = (this.manche * 7919 + Math.floor(this.rng() * 100000)) >>> 0;
-    this.niveau = genererNiveau(theme, this.graine);
+    // Les cartes s'enchaînent dans l'ordre de la liste : ce que le Host a
+    // choisi est ce qui se joue, sans tirage au sort.
+    const carte = this.cartes[(this.manche - 1) % this.cartes.length];
+    const lu = lireCarte(carte);
+    if (!lu.ok) { this.phase = 'erreur'; this.erreur = `${carte.nom ?? 'carte'} : ${lu.erreur}`; return; }
+    this.niveau = preparerNiveau(lu.niveau);
+
     this.debutManche = this.now();
     this.finDecompte = this.debutManche + DECOMPTE_MS;
     this.arrivees = [];
     this.effets = [];
     this.bombes = [];
     this.evenement = null;
+    this.annonce = null;
+    this.premierA = null;
     this.prochainEvenement = this.debutManche + DECOMPTE_MS + 18000;
 
+    const dep = this.niveau.depart;
     this.etats = {};
     this.joueurs.forEach((j, i) => {
       this.etats[j.id] = {
-        x: 40 + (i % 4) * 34, y: 24 + Math.floor(i / 4) * 6,
+        x: dep.x + (i % 4) * 8, y: dep.y + 2 + Math.floor(i / 4) * 4,
         vx: 0, vy: 0,
         auSol: false, dernierSol: 0, tamponSaut: 0,
         regard: 1, sautsRestants: 1,
         dash: { finit: 0, pret: 0 },
-        bonus: null, bonusFinit: 0,
+        bonus: null,
         bouclier: false, ghost: 0, vitesse: 0, doubleSaut: 0,
-        gelJusqua: 0,
-        mort: false, respawnA: 0, causeMort: null, invulnerableJusqua: 0,
-        checkpoint: { x: 40, y: 20 },
+        gelJusqua: 0, invulnerableJusqua: 0,
+        glace: false, collant: false, surEchelle: false, graviteInverse: false,
+        mort: false, respawnA: 0, causeMort: null,
+        checkpoint: { x: dep.x, y: dep.y + 2 },
         arrive: false, rang: null, temps: null,
         entree: { gauche: false, droite: false, saut: false, dash: false, pouvoir: false },
       };
     });
     this.phase = 'decompte';
-    this.dire(`🔥 Manche ${this.manche}/${this.manchesTotal} — ${THEMES[theme].nom}`);
+    this.dire(`🔥 Manche ${this.manche}/${this.manchesTotal} — ${this.niveau.nom}`);
   }
 
   /* ------------------------- entrées ------------------------- */
@@ -387,8 +318,6 @@ export class DevilLevelEngine {
     if (t < e.gelJusqua) return { ok: false, error: 'Gelé !' };
     if (typeof patch.gauche === 'boolean') e.entree.gauche = patch.gauche;
     if (typeof patch.droite === 'boolean') e.entree.droite = patch.droite;
-    // Le saut est mémorisé un court instant : appuyer juste avant d'atterrir
-    // doit fonctionner, sinon les enchaînements paraissent injustes.
     if (patch.saut === true) e.tamponSaut = t + TAMPON_SAUT_MS;
     if (typeof patch.saut === 'boolean') e.entree.saut = patch.saut;
     if (patch.dash === true) this.dasher(id);
@@ -408,14 +337,12 @@ export class DevilLevelEngine {
     return { ok: true };
   }
 
-  /** Bonus offensifs : gel, tornade, bombe. Les autres agissent au ramassage. */
   utiliserBonus(id) {
     const e = this.etatDe(id);
     if (!e || !e.bonus || e.mort || this.phase !== 'course') return { ok: false };
     const t = this.now();
     const type = e.bonus;
     if (type === 'gel') {
-      // Ne gèle qu'un adversaire PROCHE : impossible de bloquer le peloton.
       const cible = this.joueurs
         .map((j) => ({ j, s: this.etats[j.id] }))
         .filter(({ j, s }) => j.id !== id && !s.mort && !s.arrive && Math.abs(s.x - e.x) < 320)
@@ -431,10 +358,8 @@ export class DevilLevelEngine {
         if (j.id === id) continue;
         const s = this.etats[j.id];
         if (s.mort || s.arrive) continue;
-        const d = Math.hypot(s.x - e.x, s.y - e.y);
-        if (d > TORNADE_RAYON) continue;
-        const sens = s.x >= e.x ? 1 : -1;
-        s.vx += sens * TORNADE_FORCE;
+        if (Math.hypot(s.x - e.x, s.y - e.y) > TORNADE_RAYON) continue;
+        s.vx += (s.x >= e.x ? 1 : -1) * TORNADE_FORCE;
         s.vy += 240;
         touches += 1;
       }
@@ -446,9 +371,7 @@ export class DevilLevelEngine {
         explosionA: t + BOMBE_DELAI_MS, par: id,
       });
       this.dire(`💣 ${this.pseudoDe(id)} lance une bombe.`);
-    } else {
-      return { ok: false, error: 'Ce bonus agit tout seul.' };
-    }
+    } else return { ok: false, error: 'Ce bonus agit tout seul.' };
     e.bonus = null;
     return { ok: true };
   }
@@ -461,29 +384,21 @@ export class DevilLevelEngine {
       if (t >= this.finDecompte) { this.phase = 'course'; this.dire('🏁 Partez !'); }
       return;
     }
-    if (this.phase === 'fin-manche') {
-      if (t >= this.finManche) this.suiteManche();
-      return;
-    }
+    if (this.phase === 'fin-manche') { if (t >= this.finManche) this.suiteManche(); return; }
     if (this.phase !== 'course') return;
 
     const dt = TICK_MS / 1000;
     this.majEvenement(t);
+    this.majTuiles(t);
     for (const j of this.joueurs) this.majJoueur(j.id, dt, t);
     this.majBombes(t);
     this.effets = this.effets.filter((f) => t - f.at < 800);
 
-    // La manche s'arrête quand tout le monde est arrivé…
     if (this.joueurs.every((j) => this.etats[j.id].arrive)) { this.finirManche(); return; }
 
-    // …ou quand le temps est écoulé. Deux limites, intégrées ici plutôt que
-    // dans une méthode séparée : une garde que l'appelant peut oublier de
-    // déclencher n'en est pas une.
     const tropLong = t - this.finDecompte > COURSE_MAX_MS;
     const apresPremier = this.premierA && (t - this.premierA > DELAI_APRES_PREMIER_MS);
     if (tropLong || apresPremier) {
-      // Les retardataires sont classés selon leur avancée sur la route : le
-      // classement reste juste même sans franchir la ligne.
       const restants = this.joueurs
         .filter((j) => !this.etats[j.id].arrive)
         .sort((a, b) => this.etats[b.id].x - this.etats[a.id].x);
@@ -498,7 +413,6 @@ export class DevilLevelEngine {
     }
   }
 
-  /** Événements de niveau, annoncés AVANT de s'activer (règle du cahier). */
   majEvenement(t) {
     if (this.evenement && t >= this.evenement.finit) {
       this.dire(`✅ ${this.evenement.nom} terminé.`);
@@ -507,14 +421,13 @@ export class DevilLevelEngine {
       return;
     }
     if (this.evenement || t < this.prochainEvenement) return;
-    if (this.evenement === null && !this.annonce) {
-      // Annonce 2,5 s avant : le joueur doit pouvoir s'y préparer.
+    if (!this.annonce) {
       this.annonce = { type: ['darkness', 'earthquake', 'chaos', 'speed', 'reverse'][Math.floor(this.rng() * 5)], a: t + 2500 };
       const noms = { darkness: '🌑 Darkness', earthquake: '🌎 Earthquake', chaos: '💀 Chaos', speed: '⏩ Speed Mode', reverse: '🔄 Reverse' };
       this.dire(`⚠️ ${noms[this.annonce.type]} dans 3 secondes…`);
       return;
     }
-    if (this.annonce && t >= this.annonce.a) {
+    if (t >= this.annonce.a) {
       const noms = { darkness: 'Darkness', earthquake: 'Earthquake', chaos: 'Chaos', speed: 'Speed Mode', reverse: 'Reverse' };
       this.evenement = { type: this.annonce.type, nom: noms[this.annonce.type], finit: t + 12000 };
       this.annonce = null;
@@ -522,10 +435,76 @@ export class DevilLevelEngine {
     }
   }
 
-  facteurTemps() {
-    if (this.evenement?.type === 'speed') return 1.75;
-    if (this.evenement?.type === 'reverse') return -1;
-    return 1;
+  facteurTemps() { return this.evenement?.type === 'speed' ? 1.7 : 1; }
+
+  /**
+   * Fait vivre les tuiles animées : mobiles, scies, lasers, écraseurs, blocs
+   * temporisés, plateformes fuyantes, blocs armés. Tout est calculé À PARTIR DE
+   * L'HORLOGE, sans état accumulé — ainsi deux clients qui affichent la même
+   * scène au même instant voient exactement la même chose.
+   */
+  majTuiles(t) {
+    const vt = this.facteurTemps();
+    for (const tu of this.niveau.tuiles) {
+      const d = tu.def;
+
+      if (d.mobile) {
+        const amplitude = (d.amplitude ?? 2.2) * TUILE;
+        const periode = 2600;
+        const dep = Math.sin((t / periode) * Math.PI * 2 * vt + (tu.lx + tu.ly) * 0.7) * amplitude;
+        tu.x = tu.x0 + (d.mobile === 'x' ? dep : 0);
+        tu.y = tu.y0 + (d.mobile === 'y' ? dep : 0);
+      }
+
+      if (d.cyclique) {
+        // Laser : allumé une fraction du cycle, précédé d'un avertissement.
+        const cycle = 2600;
+        const phase = (t + (tu.lx + tu.ly) * 190) % cycle;
+        tu.actif = this.evenement?.type === 'chaos' || phase < 520;
+        tu.imminent = !tu.actif && phase > cycle - 520;
+      } else if (d.ecraseur) {
+        const cycle = 3000;
+        const phase = ((t + tu.lx * 260) % cycle) / cycle;
+        const desc = phase < 0.3 ? phase / 0.3 : Math.max(0, 1 - (phase - 0.3) / 0.7);
+        tu.y = tu.y0 - desc * TUILE * 4;
+        tu.actif = true;
+      } else if (d.temporise) {
+        // Bloc qui apparaît et disparaît : solide seulement la moitié du temps.
+        const phase = ((t + tu.lx * 400) % 2400) / 2400;
+        tu.actif = phase < 0.55;
+      } else if (d.blocArme) {
+        // Ne tombe qu'une fois armé par une plaque, puis se réarme.
+        if (tu.etat) {
+          const age = t - tu.etat;
+          if (age > 3200) { tu.etat = null; tu.y = tu.y0; tu.actif = false; }
+          else if (age > 900) {
+            tu.actif = true;
+            tu.y = tu.y0 - Math.min(1, (age - 900) / 450) * TUILE * 4;
+          } else tu.actif = false;
+        } else { tu.actif = false; tu.y = tu.y0; }
+      } else if (d.fuyante || d.fauxSol) {
+        // Cède après avoir été foulée, puis revient.
+        if (tu.etat) {
+          const age = t - tu.etat;
+          const delai = d.fauxSol ? 380 : 700;
+          tu.tombee = age > delai && age < delai + 2400;
+          if (age >= delai + 2400) { tu.etat = null; tu.tombee = false; }
+        } else tu.tombee = false;
+      } else if (d.cassable) {
+        if (tu.cassee && t - tu.cassee > 4000) tu.cassee = false;
+      } else tu.actif = true;
+    }
+  }
+
+  /** Une tuile bloque-t-elle en ce moment ? */
+  tuileSolide(tu) {
+    const d = tu.def;
+    if (d.invisible && !tu.revelee) return false;
+    if (d.cassable && tu.cassee) return false;
+    if (d.temporise && !tu.actif) return false;
+    if ((d.fuyante || d.fauxSol) && tu.tombee) return false;
+    if (d.blocArme) return false;      // il traverse, il ne porte pas
+    return !!(d.solide || d.plateforme);
   }
 
   majJoueur(id, dt, t) {
@@ -535,71 +514,74 @@ export class DevilLevelEngine {
     if (e.mort) {
       if (t >= e.respawnA) {
         e.mort = false;
-        e.x = e.checkpoint.x;
-        // On réapparaît légèrement AU-DESSUS du point de reprise : atterrir
-        // proprement vaut mieux que naître à l'intérieur d'une surface.
-        e.y = e.checkpoint.y + 6;
+        e.x = e.checkpoint.x; e.y = e.checkpoint.y + 6;
         e.vx = 0; e.vy = 0;
-        e.bouclier = false; e.ghost = 0;
-        // Brève immunité : si un piège balaie justement le checkpoint au
-        // moment du retour, on ne repart pas dans une boucle de mort.
+        e.bouclier = false; e.ghost = 0; e.graviteInverse = false;
         e.invulnerableJusqua = t + 800;
       }
       return;
     }
     const gele = t < e.gelJusqua;
+    const dash = t < e.dash.finit;
 
     // Horizontal.
-    const dash = t < e.dash.finit;
-    const vmax = VITESSE * (t < e.vitesse ? VITESSE_BOOST : 1);
+    const vmax = VITESSE * (t < e.vitesse ? VITESSE_BOOST : 1) * (e.collant ? 0.55 : 1);
     let dir = 0;
     if (!gele) {
       if (e.entree.gauche) dir -= 1;
       if (e.entree.droite) dir += 1;
     }
     if (dir !== 0) e.regard = dir;
-    if (dash) {
-      e.vx = e.regard * DASH_VITESSE;
-    } else if (dir !== 0) {
-      e.vx += dir * ACCEL * dt;
+    if (dash) e.vx = e.regard * DASH_VITESSE;
+    else if (dir !== 0) {
+      // Sur la glace, on accélère et on freine bien plus mollement.
+      e.vx += dir * ACCEL * dt * (e.glace ? 0.28 : 1);
       e.vx = borne(e.vx, -vmax, vmax);
     } else {
-      const frein = (e.auSol ? FREIN_SOL : FREIN_AIR) * dt;
+      const frein = (e.auSol ? FREIN_SOL : FREIN_AIR) * dt * (e.glace ? 0.12 : 1);
       e.vx = Math.abs(e.vx) <= frein ? 0 : e.vx - Math.sign(e.vx) * frein;
     }
 
-    // Saut, avec « coyote time » et tampon d'entrée : deux petites tolérances
-    // sans lesquelles les sauts ratés paraissent injustes alors qu'ils étaient
-    // bien appuyés.
+    // Saut, avec les deux tolérances qui rendent les enchaînements justes.
+    const sens = e.graviteInverse ? -1 : 1;
     const auSolRecent = t - e.dernierSol < COYOTE_MS;
     if (!gele && t < e.tamponSaut) {
-      if (e.auSol || auSolRecent) {
-        e.vy = SAUT; e.auSol = false; e.tamponSaut = 0; e.dernierSol = 0;
-      } else if (t < e.doubleSaut && e.sautsRestants > 0) {
-        e.vy = SAUT * 0.92; e.sautsRestants -= 1; e.tamponSaut = 0;
+      if (e.surEchelle) { e.vy = SAUT * 0.8 * sens; e.tamponSaut = 0; }
+      else if (e.auSol || auSolRecent) { e.vy = SAUT * sens; e.auSol = false; e.tamponSaut = 0; e.dernierSol = 0; }
+      else if (t < e.doubleSaut && e.sautsRestants > 0) {
+        e.vy = SAUT * 0.92 * sens; e.sautsRestants -= 1; e.tamponSaut = 0;
         this.effets.push({ id: ++this.uid, type: 'double-saut', x: e.x, y: e.y, at: t });
       }
     }
 
-    // Gravité : plus forte à la descente, ce qui rend le saut plus contrôlable.
-    if (!dash) e.vy -= (e.vy > 0 ? GRAVITE : GRAVITE_CHUTE) * dt;
-    e.vy = Math.max(e.vy, -900);
+    // Gravité — inversée si le joueur a franchi un bloc `g`.
+    if (e.surEchelle) {
+      // Sur une échelle on monte ou on descend, sans chute libre.
+      e.vy = (e.entree.saut ? 190 : 0) - (gele ? 0 : 0);
+      if (!e.entree.saut) e.vy = Math.max(-140, e.vy - 90);
+    } else if (!dash) {
+      const g = (e.vy * sens > 0 ? GRAVITE : GRAVITE_CHUTE) * sens;
+      e.vy -= g * dt;
+    }
+    e.vy = borne(e.vy, -900, 900);
 
-    const vitesseMonde = this.facteurTemps();
-    e.x += e.vx * dt * (vitesseMonde < 0 ? 1 : vitesseMonde === 1.75 ? 1 : 1);
+    // Déplacement puis résolution des collisions, axe par axe : c'est ce qui
+    // évite de rester coincé dans un angle entre deux tuiles.
+    e.x += e.vx * dt;
+    this.resoudreAxe(e, 'x', t);
     e.y += e.vy * dt;
+    this.resoudreAxe(e, 'y', t);
 
-    this.collisionsSol(e, t);
     if (e.auSol) { e.dernierSol = t; e.sautsRestants = 1; }
 
-    if (e.x < -200) e.x = -200;
-    if (e.y < -600) this.tuer(id, 'chute', t);
-
-    this.collisionsPieges(id, e, t);
+    this.effetsDeTuiles(id, e, t);
     this.ramasserBonus(id, e, t);
     this.majCheckpoint(e);
 
-    // Arrivée.
+    // Sortie du monde.
+    if (e.y < -TUILE * 3 || e.y > this.niveau.hauteurGrille * TUILE + TUILE * 6) this.tuer(id, 'chute', t);
+    if (e.x < -TUILE) { e.x = -TUILE; e.vx = 0; }
+
     const s = this.niveau.sortie;
     if (!e.arrive && chevauche(e.x, e.y, JOUEUR_L, JOUEUR_H, s.x, s.y, s.l, s.h)) {
       e.arrive = true;
@@ -611,128 +593,133 @@ export class DevilLevelEngine {
     }
   }
 
-  /** Plateformes fixes, mobiles, et fuyantes encore présentes. */
-  collisionsSol(e, t) {
-    e.auSol = false;
-    const surfaces = [
-      ...this.niveau.sols.map((s) => ({ x: s.x, y: s.y, l: s.l, h: 18 })),
-      ...this.niveau.mobiles.map((m) => this.poseMobile(m, t)),
-      ...this.niveau.pieges
-        .filter((p) => (p.type === 'fuyante' || p.type === 'faux-sol') && !this.estTombee(p, t))
-        .map((p) => ({ x: p.x, y: p.y, l: p.l, h: p.h })),
-    ];
-    for (const s of surfaces) {
-      // On n'atterrit que par le dessus : les plateformes se traversent par en
-      // dessous, ce qui évite de rester bloqué sous une plateforme mobile.
-      if (e.vy > 0) continue;
-      if (!chevauche(e.x, e.y, JOUEUR_L, JOUEUR_H, s.x, s.y - 4, s.l, s.h + 8)) continue;
-      const pieds = e.y;
-      const dessus = s.y + s.h;
-      if (pieds >= dessus - 22) {
-        e.y = dessus;
-        e.vy = 0;
-        e.auSol = true;
-        // Marcher sur une fuyante ou un faux sol amorce sa chute.
-        const p = this.niveau.pieges.find((q) => q.x === s.x && q.y === s.y && (q.type === 'fuyante' || q.type === 'faux-sol'));
-        if (p && !p.toucheeA) p.toucheeA = t;
+  /**
+   * Repousse le joueur hors des tuiles solides sur UN axe.
+   *
+   * Les plateformes (`=`) ne bloquent que par le dessus : on ne les heurte pas
+   * en sautant depuis dessous, sinon on resterait collé sous chaque étage.
+   */
+  resoudreAxe(e, axe, t) {
+    if (axe === 'y') e.auSol = false;
+    for (const tu of this.niveau.tuiles) {
+      if (!this.tuileSolide(tu)) continue;
+      if (!chevauche(e.x, e.y, JOUEUR_L, JOUEUR_H, tu.x, tu.y, tu.l, tu.h)) continue;
+
+      const platOnly = tu.def.plateforme && !tu.def.solide;
+      if (axe === 'x') {
+        if (platOnly) continue;                       // on traverse latéralement
+        if (e.vx > 0) e.x = tu.x - JOUEUR_L;
+        else if (e.vx < 0) e.x = tu.x + tu.l;
+        else e.x = e.x < tu.x ? tu.x - JOUEUR_L : tu.x + tu.l;
+        e.vx = 0;
+      } else {
+        const dessus = tu.y + tu.h;
+        if (e.vy <= 0) {
+          // On tombe : on ne se pose que si les pieds arrivaient d'au-dessus.
+          if (platOnly && e.y < dessus - 14) continue;
+          e.y = dessus;
+          this.atterrir(e, tu, t);
+        } else {
+          if (platOnly) continue;                     // on traverse par en bas
+          e.y = tu.y - JOUEUR_H;
+          e.vy = 0;
+        }
       }
     }
   }
 
-  poseMobile(m, t) {
-    const dephasage = Math.sin((t / m.periode) * Math.PI * 2 * this.facteurTemps() + m.phase) * m.amplitude;
-    return {
-      x: m.x + (m.axe === 'x' ? dephasage : 0),
-      y: m.y + (m.axe === 'y' ? dephasage : 0),
-      l: m.l, h: m.h,
-    };
+  /** Contact des pieds avec une tuile : c'est ici que les blocs spéciaux agissent. */
+  atterrir(e, tu, t) {
+    const d = tu.def;
+    e.auSol = true;
+    e.glace = !!d.glace;
+    e.collant = !!d.collant;
+
+    if (d.rebond) {
+      // Trampoline : on repart plus haut qu'un saut normal.
+      e.vy = SAUT * 1.55 * (e.graviteInverse ? -1 : 1);
+      e.auSol = false;
+      this.effets.push({ id: ++this.uid, type: 'rebond', x: e.x, y: e.y, at: t });
+      return;
+    }
+    if (d.mou) { e.vy = 0; e.amorti = t; return; }     // amortit la chute
+    e.vy = 0;
+    if ((d.fuyante || d.fauxSol) && !tu.etat) tu.etat = t;
+    if (d.cassable && !tu.cassee) {
+      tu.cassee = t;
+      this.effets.push({ id: ++this.uid, type: 'casse', x: tu.x + TUILE / 2, y: tu.y, at: t });
+    }
+    // Une plateforme mobile entraîne ce qui se tient dessus.
+    if (d.mobile === 'x') e.x += (tu.x - (tu.dernierX ?? tu.x));
+    tu.dernierX = tu.x;
   }
 
-  estTombee(p, t) {
-    if (!p.toucheeA) return false;
-    const age = t - p.toucheeA;
-    if (age < p.delai) return false;
-    if (age > p.delai + p.reapparition) { p.toucheeA = null; return false; }
-    return true;
-  }
+  /**
+   * Tuiles NON solides traversées par le joueur : dangers, plaques,
+   * téléporteurs, gravité, échelles, blocs invisibles à révéler.
+   */
+  effetsDeTuiles(id, e, t) {
+    const immunise = t < e.ghost || t < (e.invulnerableJusqua ?? 0);
+    e.surEchelle = false;
+    for (const tu of this.niveau.tuiles) {
+      const d = tu.def;
+      if (!chevauche(e.x, e.y, JOUEUR_L, JOUEUR_H, tu.x, tu.y, tu.l, tu.h)) continue;
 
-  /** Position et activité d'un piège à un instant donné. */
-  posePiege(p, t) {
-    const vt = this.facteurTemps();
-    if (p.type === 'scie') {
-      const d = Math.sin((t / p.periode) * Math.PI * 2 * vt + p.phase) * p.amplitude;
-      return { x: p.x + (p.axe === 'x' ? d : 0), y: p.y + (p.axe === 'y' ? d : 0), l: p.l, h: p.h, actif: true };
-    }
-    if (p.type === 'pics') {
-      const chaos = this.evenement?.type === 'chaos';
-      const phase = ((t + p.phase) % p.cycle) / p.cycle;
-      const sorti = chaos || phase > 0.65;   // sortis 35 % du temps, pas 55 %
-      return { x: p.x, y: p.y, l: p.l, h: sorti ? p.h : 6, actif: sorti };
-    }
-    if (p.type === 'laser') {
-      const phase = ((t + p.phase) % p.cycle);
-      const actif = this.evenement?.type === 'chaos' || phase < p.duree;
-      return { x: p.x, y: p.y, l: p.l, h: p.h, actif, imminent: phase >= p.cycle - 500 };
-    }
-    if (p.type === 'ecraseur') {
-      const phase = ((t + p.phase) % p.cycle) / p.cycle;
-      // Descente brutale sur le premier tiers, remontée lente ensuite.
-      const desc = phase < 0.3 ? phase / 0.3 : Math.max(0, 1 - (phase - 0.3) / 0.7);
-      return { x: p.x, y: p.y - desc * p.chute, l: p.l, h: p.h, actif: true, desc };
-    }
-    if (p.type === 'bloc-arme') {
-      if (!p.actif) return { x: p.x, y: p.y, l: p.l, h: p.h, actif: false };
-      const age = t - p.actif;
-      const desc = borne(age / 500, 0, 1);
-      const fini = age > 2600;
-      if (fini) { p.actif = false; const plaque = this.niveau.pieges.find((q) => q.id === p.lieA); if (plaque) plaque.armee = 0; }
-      return { x: p.x, y: p.y - desc * p.chute, l: p.l, h: p.h, actif: !fini };
-    }
-    if (p.type === 'lave') return { x: p.x, y: p.y, l: p.l, h: p.h, actif: true };
-    return { x: p.x, y: p.y, l: p.l, h: p.h, actif: false };
-  }
+      if (d.invisible && !tu.revelee) { tu.revelee = t; continue; }
+      if (d.echelle) { e.surEchelle = true; continue; }
 
-  collisionsPieges(id, e, t) {
-    if (t < e.ghost) return;                    // Ghost : on traverse les obstacles
-    if (t < (e.invulnerableJusqua ?? 0)) return; // immunité de retour en jeu
-    for (const p of this.niveau.pieges) {
-      if (p.type === 'fuyante' || p.type === 'faux-sol') continue;
-
-      if (p.type === 'plaque') {
-        // Sabotage : armé par le passage, retombe sur ceux de derrière.
-        if (!p.armee && chevauche(e.x, e.y, JOUEUR_L, JOUEUR_H, p.x, p.y, p.l, p.h + 20)) {
-          p.armee = t;
-          const bloc = this.niveau.pieges.find((q) => q.id === `${p.id}-bloc`);
-          if (bloc) bloc.actif = t + p.delai;
-          this.dire(`⚙️ ${this.pseudoDe(id)} déclenche un mécanisme…`);
+      if (d.plaque && !tu.etat) {
+        // Sabotage : arme TOUS les blocs armés de la colonne suivante.
+        tu.etat = t;
+        for (const bloc of this.niveau.tuiles) {
+          if (bloc.def.blocArme && !bloc.etat && Math.abs(bloc.lx - tu.lx) < 6) bloc.etat = t;
+        }
+        this.dire(`⚙️ ${this.pseudoDe(id)} déclenche un mécanisme…`);
+        continue;
+      }
+      if (d.gravite && !immunise) {
+        if (t - (e.derniereGravite ?? 0) > 800) {
+          e.graviteInverse = !e.graviteInverse;
+          e.derniereGravite = t;
+          this.effets.push({ id: ++this.uid, type: 'gravite', x: e.x, y: e.y, at: t });
         }
         continue;
       }
-      if (p.type === 'bloc-arme') {
-        if (p.actif && t < p.actif) continue;   // délai avant chute
+      if (d.teleporteur) {
+        const cible = this.niveau.teleporteurs.get(`${tu.lx},${tu.ly}`);
+        if (cible && t - (e.dernierTp ?? 0) > 900) {
+          const m = tuileVersMonde(cible.lx, cible.ly, this.niveau.hauteurGrille);
+          e.x = m.x; e.y = m.y + 4;
+          e.dernierTp = t;
+          this.effets.push({ id: ++this.uid, type: 'teleport', x: e.x, y: e.y, at: t });
+        }
+        continue;
       }
-
-      const pose = this.posePiege(p, t);
-      if (!pose.actif) continue;
-      if (!chevauche(e.x, e.y, JOUEUR_L, JOUEUR_H, pose.x, pose.y, pose.l, pose.h)) continue;
-
-      if (p.type === 'lave') { this.tuer(id, 'lave', t); return; }
-      if (p.type === 'scie') { this.tuer(id, 'scie', t); return; }
-      if (p.type === 'pics') { this.tuer(id, 'pics', t); return; }
-      if (p.type === 'laser') { this.tuer(id, 'laser', t); return; }
-      if (p.type === 'ecraseur' || p.type === 'bloc-arme') { this.tuer(id, p.type === 'ecraseur' ? 'ecraseur' : 'bloc', t); return; }
+      if (d.explosif && !tu.cassee) {
+        tu.cassee = t;
+        e.vy += 420; e.vx += e.regard * -260;
+        this.effets.push({ id: ++this.uid, type: 'explosion', x: tu.x + TUILE / 2, y: tu.y, at: t });
+        continue;
+      }
+      if (d.mortel && !immunise) {
+        if (d.cyclique && !tu.actif) continue;         // laser éteint
+        if (d.blocArme && !tu.actif) continue;
+        this.tuer(id, d.mortel, t);
+        return;
+      }
     }
   }
 
   ramasserBonus(id, e, t) {
     for (const b of this.niveau.bonus) {
       if (b.pris && t < b.reapparition) continue;
-      if (b.pris && t >= b.reapparition) b.pris = false;
-      if (!chevauche(e.x, e.y, JOUEUR_L, JOUEUR_H, b.x - 14, b.y - 14, 28, 28)) continue;
+      if (b.pris) b.pris = false;
+      if (!chevauche(e.x, e.y, JOUEUR_L, JOUEUR_H, b.x + 8, b.y + 8, TUILE - 16, TUILE - 16)) continue;
       b.pris = true;
       b.reapparition = t + 9000;
-      this.appliquerBonus(id, e, b.type, t);
-      this.effets.push({ id: ++this.uid, type: 'bonus', x: b.x, y: b.y, at: t });
+      const type = b.type === 'aleatoire' ? BONUS_IDS[Math.floor(this.rng() * BONUS_IDS.length)] : b.type;
+      this.appliquerBonus(id, e, type, t);
+      this.effets.push({ id: ++this.uid, type: 'bonus', x: b.x + TUILE / 2, y: b.y + TUILE / 2, at: t });
     }
   }
 
@@ -743,15 +730,16 @@ export class DevilLevelEngine {
     else if (type === 'bouclier') e.bouclier = true;
     else if (type === 'ghost') e.ghost = t + d;
     else if (type === 'vitesse') e.vitesse = t + d;
-    else e.bonus = type;          // gel, tornade, bombe : à déclencher soi-même
+    else e.bonus = type;
     this.dire(`${BONUS[type].icone} ${this.pseudoDe(id)} ramasse ${BONUS[type].nom}.`);
   }
 
   majCheckpoint(e) {
     for (const c of this.niveau.checkpoints) {
-      if (e.x >= c.x && c.x > e.checkpoint.x) e.checkpoint = { x: c.x, y: c.y + 10 };
+      if (e.x >= c.x && c.x > e.checkpoint.x) e.checkpoint = { x: c.x, y: c.y };
     }
   }
+
 
   majBombes(t) {
     const dt = TICK_MS / 1000;
@@ -850,8 +838,9 @@ export class DevilLevelEngine {
       vainqueur: this.vainqueur,
       evenement: this.evenement ? { type: this.evenement.type, nom: this.evenement.nom } : null,
       annonce: this.annonce ? { type: this.annonce.type, dans: Math.max(0, this.annonce.a - t) } : null,
-      niveauGraine: this.graine ?? null,
+      carte: this.niveau?.nom ?? null,
       theme: this.niveau?.theme ?? null,
+      erreur: this.erreur ?? null,
     };
     if (this.phase === 'attente' || !this.niveau) return base;
 
@@ -869,9 +858,22 @@ export class DevilLevelEngine {
         bonus: e.bonus,
       };
     });
-    base.pieges = this.niveau.pieges.map((p) => ({ id: p.id, type: p.type, ...this.posePiege(p, t), tombee: this.estTombee(p, t) }));
-    base.mobiles = this.niveau.mobiles.map((m) => ({ id: m.id, ...this.poseMobile(m, t) }));
-    base.bonusAuSol = this.niveau.bonus.filter((b) => !b.pris).map((b) => ({ id: b.id, type: b.type, x: b.x, y: b.y }));
+    // On n'envoie que ce qui BOUGE. Le tracé fixe (la matrice) a déjà été
+    // transmis une fois par manche : le renvoyer trente fois par seconde
+    // gaspillerait la bande passante pour un décor immobile.
+    base.tuiles = this.niveau.tuiles
+      .filter((tu) => tu.def.mobile || tu.def.cyclique || tu.def.ecraseur || tu.def.temporise
+        || tu.def.blocArme || tu.def.fuyante || tu.def.fauxSol || tu.def.cassable
+        || tu.def.invisible || tu.def.plaque)
+      .map((tu) => ({
+        id: tu.id, ch: tu.ch,
+        x: Math.round(tu.x), y: Math.round(tu.y),
+        actif: tu.actif !== false, imminent: !!tu.imminent,
+        tombee: !!tu.tombee, cassee: !!tu.cassee, revelee: !!tu.revelee,
+        armee: !!tu.etat,
+      }));
+    base.bonusAuSol = this.niveau.bonus.filter((b) => !b.pris)
+      .map((b) => ({ id: b.id, type: b.type, x: b.x + TUILE / 2, y: b.y + TUILE / 2 }));
     base.bombes = this.bombes.map((b) => ({ id: b.id, x: Math.round(b.x), y: Math.round(b.y), dans: Math.max(0, b.explosionA - t) }));
     base.effets = this.effets;
 
@@ -897,14 +899,16 @@ export class DevilLevelEngine {
     return base;
   }
 
-  /** Tracé du niveau : envoyé une seule fois par manche. */
+  /** Tracé du niveau : la matrice elle-même, envoyée une seule fois par manche. */
   traceNiveau() {
     if (!this.niveau) return null;
     const n = this.niveau;
     return {
-      graine: n.graine, theme: n.theme, longueurTotale: n.longueurTotale,
-      sols: n.sols, checkpoints: n.checkpoints, sortie: n.sortie,
-      pieges: n.pieges.map((p) => ({ id: p.id, type: p.type, x: p.x, y: p.y, l: p.l, h: p.h })),
+      nom: n.nom, theme: n.theme, tuile: TUILE,
+      grille: n.grille, largeur: n.largeur, hauteur: n.hauteur,
+      longueurTotale: n.longueurTotale,
+      depart: n.depart, sortie: n.sortie,
+      checkpoints: n.checkpoints.map((c) => ({ id: c.id, x: c.x, y: c.y })),
     };
   }
 
