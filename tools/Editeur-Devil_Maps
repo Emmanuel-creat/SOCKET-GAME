@@ -1,0 +1,807 @@
+#!/usr/bin/env python3
+"""
+Devil Level — éditeur de cartes.
+
+Un outil autonome : on pose les blocs à la souris en les voyant, et le bouton
+« Exporter » sort le texte prêt à coller dans `assets/cartes.txt`.
+
+    python3 editeur_devil_level.py
+
+Aucune dépendance à installer : tout repose sur tkinter, livré avec Python sur
+Windows et macOS. Sur Linux, si l'outil refuse de démarrer :
+
+    sudo apt install python3-tk
+
+Le fichier est organisé en deux moitiés nettement séparées :
+  1. la LOGIQUE (légende, validation, import/export) — sans aucune interface,
+     donc vérifiable par des tests ;
+  2. l'INTERFACE tkinter, qui ne fait qu'appeler la première.
+
+Cette séparation n'est pas cosmétique : elle permet de tester les règles sans
+ouvrir de fenêtre, et de corriger une règle sans risquer de casser l'affichage.
+"""
+
+from __future__ import annotations
+
+import re
+import unicodedata
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  1. LOGIQUE — aucune dépendance à l'interface
+# ═══════════════════════════════════════════════════════════════════════════
+
+TUILE = 28  # taille d'affichage d'une case, en pixels
+
+MARQUEUR_CARTE = "["
+MARQUEUR_META = "@"
+MARQUEUR_COMMENTAIRE = ";"
+
+VIDE = " "
+
+# Chaque bloc : (symbole, nom, famille, couleur de fond, couleur du glyphe)
+#
+# Les couleurs reprennent l'esprit du jeu — terrain en terre, dangers en rouge
+# sombre, bonus en doré — pour qu'une carte en cours d'écriture ressemble déjà
+# à ce qu'on verra en jouant.
+BLOCS = [
+    # -- terrain --
+    ("#", "Bloc plein",           "Terrain",  "#a8763d", "#5c3d1c"),
+    ("=", "Plateforme",           "Terrain",  "#c89a5c", "#5c3d1c"),
+    ("Z", "Plateforme fuyante",   "Terrain",  "#b98a6a", "#4a2f18"),
+    ("r", "Faux sol",             "Terrain",  "#9c7a52", "#3d2810"),
+    ("b", "Bloc cassable",        "Terrain",  "#c0885a", "#4a2f18"),
+    ("i", "Bloc invisible",       "Terrain",  "#7d6a55", "#e8dcc8"),
+    ("c", "Glace",                "Terrain",  "#a8dcf0", "#2c6480"),
+    ("s", "Bloc collant",         "Terrain",  "#8fa85c", "#33421f"),
+    ("o", "Bloc mou",             "Terrain",  "#d8a8c0", "#6b3350"),
+    ("w", "Bloc temporisé",       "Terrain",  "#b0a89c", "#3d382f"),
+    ("B", "Trampoline",           "Terrain",  "#5cc98a", "#1f5c38"),
+    ("M", "Mobile horizontale",   "Terrain",  "#9b8fd4", "#3a3070"),
+    ("V", "Mobile verticale",     "Terrain",  "#8f9fd4", "#303a70"),
+    ("l", "Échelle",              "Terrain",  "#c9a86a", "#5c4520"),
+    # -- dangers --
+    ("^", "Pics",                 "Dangers",  "#3a3028", "#dce4ec"),
+    ("*", "Scie",                 "Dangers",  "#3a3028", "#c9d2dd"),
+    ("!", "Laser",                "Dangers",  "#4a1f1f", "#ff5a5a"),
+    ("T", "Écraseur",             "Dangers",  "#4a4f5c", "#c9d2dd"),
+    ("~", "Lave",                 "Dangers",  "#c9391f", "#ffd166"),
+    ("x", "Bloc explosif",        "Dangers",  "#8a3a1f", "#ffb454"),
+    # -- sabotage --
+    ("O", "Plaque",               "Sabotage", "#d4a03c", "#4a3310"),
+    ("|", "Bloc armé",            "Sabotage", "#5c4f42", "#ffb454"),
+    # -- parcours --
+    ("P", "Départ",               "Parcours", "#3ca85c", "#ffffff"),
+    ("K", "Checkpoint",           "Parcours", "#4a9ed4", "#ffffff"),
+    ("D", "Sortie",               "Parcours", "#d4b03c", "#3d2f08"),
+    ("t", "Téléporteur",          "Parcours", "#a05cc9", "#ffffff"),
+    ("g", "Inversion gravité",    "Parcours", "#5cc9c0", "#0f3d38"),
+    # -- bonus --
+    ("C", "Bonus au hasard",      "Bonus",    "#e8c86a", "#4a3810"),
+    ("1", "Dash",                 "Bonus",    "#e8c86a", "#4a3810"),
+    ("2", "Double saut",          "Bonus",    "#e8c86a", "#4a3810"),
+    ("3", "Bouclier",             "Bonus",    "#e8c86a", "#4a3810"),
+    ("4", "Ghost",                "Bonus",    "#e8c86a", "#4a3810"),
+    ("5", "Vitesse",              "Bonus",    "#e8c86a", "#4a3810"),
+    ("6", "Gel",                  "Bonus",    "#e8c86a", "#4a3810"),
+    ("7", "Tornade",              "Bonus",    "#e8c86a", "#4a3810"),
+    ("8", "Bombe",                "Bonus",    "#e8c86a", "#4a3810"),
+]
+
+# Alias hérités du prototype : acceptés à la lecture, jamais proposés dans la
+# palette pour ne pas offrir deux boutons qui font la même chose.
+ALIAS = {"W": "2", "S": "4", "H": "3", "Q": "8"}
+
+PAR_SYMBOLE = {b[0]: b for b in BLOCS}
+FAMILLES = []
+for _b in BLOCS:
+    if _b[2] not in FAMILLES:
+        FAMILLES.append(_b[2])
+
+THEMES = ["prairie", "crepuscule", "glacier", "volcan", "nuit", "bonbon"]
+
+# Couleur du vide, par thème : la carte en cours d'écriture prend déjà
+# l'ambiance du niveau fini.
+CIEL = {
+    "prairie": "#9fd4f5", "crepuscule": "#ffbe8f", "glacier": "#cfeaf7",
+    "volcan": "#a85a44", "nuit": "#39457a", "bonbon": "#ffc9e0",
+}
+
+
+def melanger(couleur_a: str, couleur_b: str, part: float) -> str:
+    """
+    Mélange deux couleurs et renvoie un « #rrggbb » OPAQUE.
+
+    ⚠️ tkinter n'accepte que 3, 6, 9 ou 12 chiffres hexadécimaux — jamais de
+    canal alpha. Écrire « #00000018 » pour obtenir un noir transparent lève
+    `TclError: invalid color name`. Pour obtenir un trait discret, on calcule
+    donc la teinte finale ici, au lieu de compter sur une transparence qui
+    n'existe pas.
+    """
+    a = couleur_a.lstrip("#")
+    b = couleur_b.lstrip("#")
+    part = max(0.0, min(1.0, part))
+    canaux = []
+    for i in (0, 2, 4):
+        va = int(a[i:i + 2], 16)
+        vb = int(b[i:i + 2], 16)
+        canaux.append(round(va + (vb - va) * part))
+    return "#{:02x}{:02x}{:02x}".format(*canaux)
+
+
+def symbole_connu(ch: str) -> bool:
+    """Le caractère correspond-il à un bloc (alias compris) ?"""
+    return ch in PAR_SYMBOLE or ch in ALIAS
+
+
+def normaliser(ch: str) -> str:
+    """Ramène un alias à son symbole canonique."""
+    return ALIAS.get(ch, ch)
+
+
+def identifiant(nom: str) -> str:
+    """
+    Clé technique d'un nom de carte.
+
+    Les apostrophes sont RETIRÉES et non transformées en séparateur : sinon
+    « Nathan's room » et « nathans room » donneraient deux clés différentes.
+    """
+    sans_accent = "".join(
+        c for c in unicodedata.normalize("NFD", nom)
+        if unicodedata.category(c) != "Mn"
+    )
+    sans_apostrophe = sans_accent.replace("'", "").replace("\u2019", "")
+    cle = re.sub(r"[^a-z0-9]+", "-", sans_apostrophe.lower()).strip("-")
+    return cle or "carte"
+
+
+class Grille:
+    """Matrice de symboles, redimensionnable, avec historique d'annulation."""
+
+    def __init__(self, largeur: int = 60, hauteur: int = 14):
+        self.largeur = max(4, largeur)
+        self.hauteur = max(3, hauteur)
+        self.cases = [[VIDE] * self.largeur for _ in range(self.hauteur)]
+        self._historique = []
+
+    # -- lecture / écriture --
+
+    def dans(self, x: int, y: int) -> bool:
+        return 0 <= x < self.largeur and 0 <= y < self.hauteur
+
+    def lire(self, x: int, y: int) -> str:
+        return self.cases[y][x] if self.dans(x, y) else VIDE
+
+    def poser(self, x: int, y: int, ch: str) -> bool:
+        """Pose un symbole. Renvoie False si rien n'a changé."""
+        if not self.dans(x, y):
+            return False
+        if self.cases[y][x] == ch:
+            return False
+        self.cases[y][x] = ch
+        return True
+
+    # -- historique --
+
+    def memoriser(self):
+        """Enregistre l'état courant avant une série de modifications."""
+        self._historique.append([ligne[:] for ligne in self.cases])
+        if len(self._historique) > 60:
+            self._historique.pop(0)
+
+    def annuler(self) -> bool:
+        if not self._historique:
+            return False
+        self.cases = self._historique.pop()
+        self.hauteur = len(self.cases)
+        self.largeur = len(self.cases[0]) if self.cases else 0
+        return True
+
+    # -- dimensions --
+
+    def redimensionner(self, largeur: int, hauteur: int):
+        """
+        Change les dimensions en conservant le contenu.
+
+        Les lignes sont ajoutées EN HAUT et retirées EN HAUT : la première
+        ligne étant le haut du niveau, agrandir doit ajouter du ciel, pas
+        déplacer le sol.
+        """
+        largeur = max(4, largeur)
+        hauteur = max(3, hauteur)
+        anciennes = self.cases
+
+        if hauteur > self.hauteur:
+            ajout = [[VIDE] * self.largeur for _ in range(hauteur - self.hauteur)]
+            anciennes = ajout + anciennes
+        elif hauteur < self.hauteur:
+            anciennes = anciennes[self.hauteur - hauteur:]
+
+        nouvelles = []
+        for ligne in anciennes:
+            if largeur > len(ligne):
+                nouvelles.append(ligne + [VIDE] * (largeur - len(ligne)))
+            else:
+                nouvelles.append(ligne[:largeur])
+
+        self.cases = nouvelles
+        self.largeur = largeur
+        self.hauteur = hauteur
+
+    # -- conversion --
+
+    def lignes(self) -> list[str]:
+        """Matrice en lignes de texte, espaces de fin retirés."""
+        return ["".join(ligne).rstrip() for ligne in self.cases]
+
+    @classmethod
+    def depuis_lignes(cls, lignes: list[str]) -> "Grille":
+        lignes = list(lignes) or [""]
+        largeur = max(4, max(len(l) for l in lignes))
+        g = cls(largeur, max(3, len(lignes)))
+        for y, ligne in enumerate(lignes):
+            for x, ch in enumerate(ligne):
+                if x < largeur:
+                    g.cases[y][x] = ch if symbole_connu(ch) else VIDE
+        return g
+
+
+def valider(grille: Grille) -> tuple[list[str], list[str]]:
+    """
+    Contrôle une carte. Renvoie (erreurs, avertissements).
+
+    Les mêmes règles que le jeu, pour qu'une carte validée ici soit acceptée
+    là-bas — vérifier dans l'éditeur n'aurait aucun intérêt sinon.
+    """
+    erreurs, avertissements = [], []
+    compte = {}
+    inconnus = set()
+
+    for y in range(grille.hauteur):
+        for x in range(grille.largeur):
+            ch = grille.lire(x, y)
+            if ch == VIDE or ch == ".":
+                continue
+            if not symbole_connu(ch):
+                inconnus.add(ch)
+                continue
+            compte[normaliser(ch)] = compte.get(normaliser(ch), 0) + 1
+
+    if inconnus:
+        liste = ", ".join(f"« {c} »" for c in sorted(inconnus))
+        erreurs.append(f"Symbole inconnu : {liste}")
+    if compte.get("P", 0) == 0:
+        erreurs.append("Il manque le départ « P ».")
+    if compte.get("P", 0) > 1:
+        erreurs.append("Il y a plusieurs départs « P » — un seul est permis.")
+    if compte.get("D", 0) == 0:
+        erreurs.append("Il manque la sortie « D ».")
+    if compte.get("t", 0) % 2 != 0:
+        erreurs.append("Les téléporteurs « t » vont par paires : il y en a un de trop.")
+
+    if compte.get("K", 0) == 0:
+        avertissements.append("Aucun checkpoint « K » : une seule erreur renverra au départ.")
+    if not any(compte.get(b, 0) for b in "C12345678"):
+        avertissements.append("Aucun bonus sur la carte.")
+    if grille.largeur < 20:
+        avertissements.append("Carte très courte (moins de 20 colonnes).")
+
+    # Le départ posé dans le vide fait tomber le joueur dès le décompte.
+    pos_p = trouver(grille, "P")
+    if pos_p and not erreurs:
+        x, y = pos_p
+        sous = [grille.lire(x, yy) for yy in range(y + 1, grille.hauteur)]
+        if not any(ch in PAR_SYMBOLE and est_porteur(ch) for ch in sous):
+            avertissements.append("Rien sous le départ « P » : le joueur tombera aussitôt.")
+
+    return erreurs, avertissements
+
+
+def est_porteur(ch: str) -> bool:
+    """Le bloc peut-il porter un joueur ?"""
+    return ch in "#=ZrbicsowBMV"
+
+
+def trouver(grille: Grille, symbole: str):
+    for y in range(grille.hauteur):
+        for x in range(grille.largeur):
+            if grille.lire(x, y) == symbole:
+                return (x, y)
+    return None
+
+
+def exporter(nom: str, theme: str, auteur: str, grille: Grille) -> str:
+    """Produit le bloc de texte à coller dans le catalogue."""
+    lignes = grille.lignes()
+    # On retire les rangées vides du haut et du bas : elles n'apportent rien au
+    # niveau et alourdiraient le fichier.
+    while lignes and not lignes[0].strip():
+        lignes.pop(0)
+    while lignes and not lignes[-1].strip():
+        lignes.pop()
+
+    sortie = [f"[{nom.strip() or 'Sans titre'}]"]
+    if theme:
+        sortie.append(f"@theme {theme}")
+    if auteur.strip():
+        sortie.append(f"@auteur {auteur.strip()}")
+    sortie.append("")
+    sortie.extend(lignes)
+    sortie.append("")
+    return "\n".join(sortie)
+
+
+def analyser_catalogue(texte: str) -> list[dict]:
+    """
+    Relit un catalogue pour en rouvrir une carte.
+
+    Même format que le jeu : `[Nom]` démarre une carte, `@clé valeur` porte une
+    métadonnée, `;` commente. On ne peut pas commenter avec « # » : c'est un
+    bloc, et une rangée de murs passerait pour un titre.
+    """
+    cartes = []
+    courante = None
+    for ligne in texte.replace("\r", "").split("\n"):
+        nu = ligne.lstrip()
+        if nu.startswith(MARQUEUR_CARTE):
+            if courante:
+                cartes.append(courante)
+            nom = nu.lstrip("[").rstrip()
+            if nom.endswith("]"):
+                nom = nom[:-1]
+            courante = {"nom": nom.strip(), "theme": "prairie", "auteur": "", "grille": []}
+            continue
+        if courante is None or nu.startswith(MARQUEUR_COMMENTAIRE):
+            continue
+        if nu.startswith(MARQUEUR_META):
+            morceaux = nu[1:].split(None, 1)
+            cle = morceaux[0] if morceaux else ""
+            valeur = morceaux[1].strip() if len(morceaux) > 1 else ""
+            if cle == "theme":
+                courante["theme"] = valeur or "prairie"
+            elif cle == "auteur":
+                courante["auteur"] = valeur
+            continue
+        courante["grille"].append(ligne)
+    if courante:
+        cartes.append(courante)
+
+    for c in cartes:
+        # Rognage aux extrémités seulement : les lignes vides du milieu sont
+        # des rangées d'air et font partie du niveau.
+        while c["grille"] and not c["grille"][0].strip():
+            c["grille"].pop(0)
+        while c["grille"] and not c["grille"][-1].strip():
+            c["grille"].pop()
+    return [c for c in cartes if c["nom"] and c["grille"]]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  2. INTERFACE
+# ═══════════════════════════════════════════════════════════════════════════
+
+def lancer():
+    """Ouvre l'éditeur. Importé ici pour que la logique reste testable sans tkinter."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog, messagebox, ttk
+    except ImportError:
+        print("tkinter est introuvable.")
+        print("  Windows / macOS : il est normalement livré avec Python.")
+        print("  Linux (Debian/Ubuntu) : sudo apt install python3-tk")
+        return
+
+    class Editeur:
+        def __init__(self, racine):
+            self.r = racine
+            self.r.title("Devil Level — éditeur de cartes")
+            self.r.geometry("1180x760")
+            self.r.configure(bg="#1a1d26")
+
+            self.grille = Grille(60, 14)
+            self.outil = "#"
+            self.peint = False
+            self.efface = False
+            self.modifie_ce_geste = False
+
+            self._barre_haut()
+            self._corps()
+            self._barre_bas()
+            self._raccourcis()
+            self.redessiner()
+            self.verifier(silencieux=True)
+
+        # ---------------------------------------------------------------
+        # Construction
+        # ---------------------------------------------------------------
+
+        def _barre_haut(self):
+            haut = tk.Frame(self.r, bg="#22262f", pady=8, padx=10)
+            haut.pack(fill="x")
+
+            tk.Label(haut, text="Nom", bg="#22262f", fg="#cfd6e4").pack(side="left")
+            self.champ_nom = tk.Entry(haut, width=22)
+            self.champ_nom.insert(0, "Ma carte")
+            self.champ_nom.pack(side="left", padx=(4, 14))
+
+            tk.Label(haut, text="Thème", bg="#22262f", fg="#cfd6e4").pack(side="left")
+            self.champ_theme = ttk.Combobox(haut, values=THEMES, width=12, state="readonly")
+            self.champ_theme.set(THEMES[0])
+            self.champ_theme.pack(side="left", padx=(4, 14))
+            self.champ_theme.bind("<<ComboboxSelected>>", lambda _e: self.redessiner())
+
+            tk.Label(haut, text="Auteur", bg="#22262f", fg="#cfd6e4").pack(side="left")
+            self.champ_auteur = tk.Entry(haut, width=14)
+            self.champ_auteur.pack(side="left", padx=(4, 14))
+
+            tk.Label(haut, text="Taille", bg="#22262f", fg="#cfd6e4").pack(side="left")
+            self.champ_l = tk.Spinbox(haut, from_=10, to=400, width=5, command=self.appliquer_taille)
+            self.champ_l.delete(0, "end"); self.champ_l.insert(0, "60")
+            self.champ_l.pack(side="left", padx=3)
+            tk.Label(haut, text="×", bg="#22262f", fg="#cfd6e4").pack(side="left")
+            self.champ_h = tk.Spinbox(haut, from_=5, to=60, width=4, command=self.appliquer_taille)
+            self.champ_h.delete(0, "end"); self.champ_h.insert(0, "14")
+            self.champ_h.pack(side="left", padx=3)
+
+            for texte, action in (
+                ("📂 Ouvrir", self.ouvrir),
+                ("✓ Vérifier", self.verifier),
+                ("💾 Exporter", self.exporter),
+            ):
+                tk.Button(haut, text=texte, command=action, bg="#3a4152", fg="#fff",
+                          relief="flat", padx=10, pady=3).pack(side="right", padx=4)
+
+        def _corps(self):
+            corps = tk.Frame(self.r, bg="#1a1d26")
+            corps.pack(fill="both", expand=True)
+
+            # -- palette --
+            gauche = tk.Frame(corps, bg="#22262f", width=232)
+            gauche.pack(side="left", fill="y")
+            gauche.pack_propagate(False)
+
+            tk.Label(gauche, text="BLOCS", bg="#22262f", fg="#8d97ab",
+                     font=("Segoe UI", 8, "bold")).pack(pady=(10, 4))
+
+            zone = tk.Canvas(gauche, bg="#22262f", highlightthickness=0, width=214)
+            barre = tk.Scrollbar(gauche, orient="vertical", command=zone.yview)
+            interne = tk.Frame(zone, bg="#22262f")
+            interne.bind("<Configure>", lambda _e: zone.configure(scrollregion=zone.bbox("all")))
+            zone.create_window((0, 0), window=interne, anchor="nw")
+            zone.configure(yscrollcommand=barre.set)
+            zone.pack(side="left", fill="both", expand=True)
+            barre.pack(side="right", fill="y")
+
+            self.boutons = {}
+            for famille in FAMILLES:
+                tk.Label(interne, text=famille.upper(), bg="#22262f", fg="#6f7a90",
+                         font=("Segoe UI", 7, "bold")).pack(anchor="w", padx=8, pady=(9, 2))
+                for sym, nom, fam, fond, glyphe in BLOCS:
+                    if fam != famille:
+                        continue
+                    b = tk.Frame(interne, bg="#22262f", cursor="hand2")
+                    b.pack(fill="x", padx=6, pady=1)
+                    pastille = tk.Label(b, text=sym, bg=fond, fg=glyphe, width=3,
+                                        font=("Consolas", 11, "bold"))
+                    pastille.pack(side="left", padx=(2, 7), pady=1)
+                    etiquette = tk.Label(b, text=nom, bg="#22262f", fg="#cfd6e4",
+                                         anchor="w", font=("Segoe UI", 9))
+                    etiquette.pack(side="left", fill="x", expand=True)
+                    for w in (b, pastille, etiquette):
+                        w.bind("<Button-1>", lambda _e, s=sym: self.choisir(s))
+                    self.boutons[sym] = (b, etiquette)
+
+            # -- gomme --
+            g = tk.Frame(interne, bg="#22262f", cursor="hand2")
+            g.pack(fill="x", padx=6, pady=(12, 8))
+            pg = tk.Label(g, text="␣", bg="#39404f", fg="#cfd6e4", width=3,
+                          font=("Consolas", 11, "bold"))
+            pg.pack(side="left", padx=(2, 7))
+            eg = tk.Label(g, text="Gomme  (clic droit)", bg="#22262f", fg="#cfd6e4",
+                          anchor="w", font=("Segoe UI", 9))
+            eg.pack(side="left")
+            for w in (g, pg, eg):
+                w.bind("<Button-1>", lambda _e: self.choisir(VIDE))
+            self.boutons[VIDE] = (g, eg)
+
+            # -- plan de travail --
+            droite = tk.Frame(corps, bg="#1a1d26")
+            droite.pack(side="left", fill="both", expand=True)
+
+            self.toile = tk.Canvas(droite, bg="#9fd4f5", highlightthickness=0)
+            hbar = tk.Scrollbar(droite, orient="horizontal", command=self.toile.xview)
+            vbar = tk.Scrollbar(droite, orient="vertical", command=self.toile.yview)
+            self.toile.configure(xscrollcommand=hbar.set, yscrollcommand=vbar.set)
+            hbar.pack(side="bottom", fill="x")
+            vbar.pack(side="right", fill="y")
+            self.toile.pack(side="left", fill="both", expand=True)
+
+            self.toile.bind("<Button-1>", lambda e: self.debut_trace(e, False))
+            self.toile.bind("<B1-Motion>", lambda e: self.trace(e, False))
+            self.toile.bind("<ButtonRelease-1>", self.fin_trace)
+            self.toile.bind("<Button-3>", lambda e: self.debut_trace(e, True))
+            self.toile.bind("<B3-Motion>", lambda e: self.trace(e, True))
+            self.toile.bind("<ButtonRelease-3>", self.fin_trace)
+            self.toile.bind("<Motion>", self.survol)
+
+        def _barre_bas(self):
+            bas = tk.Frame(self.r, bg="#22262f", pady=6, padx=10)
+            bas.pack(fill="x")
+            self.etat = tk.Label(bas, text="", bg="#22262f", fg="#9fd4a0",
+                                 anchor="w", font=("Segoe UI", 9))
+            self.etat.pack(side="left", fill="x", expand=True)
+            self.position = tk.Label(bas, text="", bg="#22262f", fg="#6f7a90",
+                                     font=("Consolas", 9))
+            self.position.pack(side="right")
+
+        def _raccourcis(self):
+            self.r.bind("<Control-z>", lambda _e: self.annuler())
+            self.r.bind("<Control-s>", lambda _e: self.exporter())
+            # Taper le symbole d'un bloc le sélectionne : c'est plus rapide que
+            # de viser la palette quand on enchaîne les poses.
+            self.r.bind("<Key>", self.touche)
+
+        # ---------------------------------------------------------------
+        # Interactions
+        # ---------------------------------------------------------------
+
+        def touche(self, e):
+            if e.widget in (self.champ_nom, self.champ_auteur, self.champ_l, self.champ_h):
+                return
+            ch = e.char
+            if ch and (ch in PAR_SYMBOLE or ch in ALIAS):
+                self.choisir(normaliser(ch))
+            elif ch == " ":
+                self.choisir(VIDE)
+
+        def choisir(self, symbole):
+            self.outil = symbole
+            for sym, (cadre, etiquette) in self.boutons.items():
+                actif = sym == symbole
+                cadre.configure(bg="#3d6ea8" if actif else "#22262f")
+                etiquette.configure(bg="#3d6ea8" if actif else "#22262f",
+                                    fg="#ffffff" if actif else "#cfd6e4")
+            nom = "Gomme" if symbole == VIDE else PAR_SYMBOLE[symbole][1]
+            self.dire(f"Outil : {nom}", "#cfd6e4")
+
+        def case_sous(self, e):
+            x = int(self.toile.canvasx(e.x) // TUILE)
+            y = int(self.toile.canvasy(e.y) // TUILE)
+            return x, y
+
+        def debut_trace(self, e, gomme):
+            self.grille.memoriser()
+            self.modifie_ce_geste = False
+            self.trace(e, gomme)
+
+        def trace(self, e, gomme):
+            x, y = self.case_sous(e)
+            if not self.grille.dans(x, y):
+                return
+            symbole = VIDE if gomme else self.outil
+            # Le départ est unique : en poser un nouveau retire l'ancien, plutôt
+            # que de laisser une carte invalide avec deux « P ».
+            if symbole == "P":
+                ancien = trouver(self.grille, "P")
+                if ancien and ancien != (x, y):
+                    self.grille.poser(ancien[0], ancien[1], VIDE)
+                    self.dessiner_case(*ancien)
+            if self.grille.poser(x, y, symbole):
+                self.dessiner_case(x, y)
+                self.modifie_ce_geste = True
+
+        def fin_trace(self, _e):
+            if self.modifie_ce_geste:
+                self.verifier(silencieux=True)
+
+        def survol(self, e):
+            x, y = self.case_sous(e)
+            if self.grille.dans(x, y):
+                ch = self.grille.lire(x, y)
+                nom = PAR_SYMBOLE[ch][1] if ch in PAR_SYMBOLE else "vide"
+                self.position.configure(text=f"colonne {x + 1}, ligne {y + 1} — {nom}")
+
+        def annuler(self):
+            if self.grille.annuler():
+                self.redessiner()
+                self.verifier(silencieux=True)
+                self.dire("Annulé.", "#cfd6e4")
+            else:
+                self.dire("Rien à annuler.", "#cfd6e4")
+
+        def appliquer_taille(self):
+            try:
+                l = int(self.champ_l.get())
+                h = int(self.champ_h.get())
+            except ValueError:
+                return
+            self.grille.memoriser()
+            self.grille.redimensionner(l, h)
+            self.redessiner()
+
+        # ---------------------------------------------------------------
+        # Dessin
+        # ---------------------------------------------------------------
+
+        def redessiner(self):
+            self.toile.delete("all")
+            fond = CIEL.get(self.champ_theme.get(), "#9fd4f5")
+            self.toile.configure(bg=fond)
+            L = self.grille.largeur * TUILE
+            H = self.grille.hauteur * TUILE
+            self.toile.configure(scrollregion=(0, 0, L, H))
+
+            # Grille de repère : indispensable pour compter les colonnes quand
+            # on aligne un piège sur une plateforme. Les traits fins sont
+            # obtenus en assombrissant LÉGÈREMENT le fond — tkinter ne connaît
+            # pas la transparence, il faut donc calculer la teinte.
+            fin = melanger(fond, "#000000", 0.12)
+            fort = melanger(fond, "#ffffff", 0.75)
+            for x in range(self.grille.largeur + 1):
+                couleur = fort if x % 10 == 0 else fin
+                self.toile.create_line(x * TUILE, 0, x * TUILE, H, fill=couleur)
+            for y in range(self.grille.hauteur + 1):
+                couleur = fort if y % 5 == 0 else fin
+                self.toile.create_line(0, y * TUILE, L, y * TUILE, fill=couleur)
+
+            for y in range(self.grille.hauteur):
+                for x in range(self.grille.largeur):
+                    self.dessiner_case(x, y)
+
+        def dessiner_case(self, x, y):
+            self.toile.delete(f"c{x}_{y}")
+            ch = self.grille.lire(x, y)
+            if ch == VIDE:
+                return
+            bloc = PAR_SYMBOLE.get(normaliser(ch))
+            if not bloc:
+                return
+            _, _, _, fond, glyphe = bloc
+            x0, y0 = x * TUILE, y * TUILE
+            demi = ch in "=ZM V^O".replace(" ", "")
+            hauteur = TUILE // 2 if demi else TUILE
+            decalage = TUILE // 2 if demi else 0
+            self.toile.create_rectangle(
+                x0 + 1, y0 + decalage + 1, x0 + TUILE - 1, y0 + decalage + hauteur - 1,
+                fill=fond, outline="", tags=f"c{x}_{y}")
+            self.toile.create_text(
+                x0 + TUILE // 2, y0 + TUILE // 2, text=ch, fill=glyphe,
+                font=("Consolas", 11, "bold"), tags=f"c{x}_{y}")
+
+        # ---------------------------------------------------------------
+        # Fichiers
+        # ---------------------------------------------------------------
+
+        def dire(self, texte, couleur="#9fd4a0"):
+            self.etat.configure(text=texte, fg=couleur)
+
+        def verifier(self, silencieux=False):
+            erreurs, avertissements = valider(self.grille)
+            if erreurs:
+                self.dire("⚠️  " + "  ".join(erreurs), "#ff9a9a")
+                return False
+            resume = f"✅  {self.grille.largeur}×{self.grille.hauteur}"
+            if avertissements:
+                self.dire(resume + "  —  " + "  ".join(avertissements), "#ffd166")
+            else:
+                self.dire(resume + "  —  carte valide.", "#9fd4a0")
+            return True
+
+        def ouvrir(self):
+            chemin = filedialog.askopenfilename(
+                title="Ouvrir un catalogue",
+                filetypes=[("Catalogue Devil Level", "*.txt"), ("Tous", "*.*")])
+            if not chemin:
+                return
+            try:
+                with open(chemin, encoding="utf-8") as f:
+                    cartes = analyser_catalogue(f.read())
+            except OSError as err:
+                messagebox.showerror("Lecture impossible", str(err))
+                return
+            if not cartes:
+                messagebox.showwarning("Rien à ouvrir", "Aucune carte dans ce fichier.")
+                return
+            self.choisir_carte(cartes)
+
+        def choisir_carte(self, cartes):
+            """Petite fenêtre de sélection quand le fichier en contient plusieurs."""
+            if len(cartes) == 1:
+                self.charger(cartes[0])
+                return
+            fen = tk.Toplevel(self.r)
+            fen.title("Quelle carte ?")
+            fen.configure(bg="#22262f")
+            tk.Label(fen, text="Choisis une carte à ouvrir :", bg="#22262f",
+                     fg="#cfd6e4", pady=8).pack()
+            liste = tk.Listbox(fen, width=44, height=min(14, len(cartes)))
+            for c in cartes:
+                suffixe = f"  —  {c['auteur']}" if c["auteur"] else ""
+                liste.insert("end", f"{c['nom']}{suffixe}")
+            liste.pack(padx=12, pady=6)
+            liste.selection_set(0)
+
+            def valider_choix():
+                choix = liste.curselection()
+                if choix:
+                    self.charger(cartes[choix[0]])
+                fen.destroy()
+
+            tk.Button(fen, text="Ouvrir", command=valider_choix, bg="#3a4152",
+                      fg="#fff", relief="flat", padx=14, pady=4).pack(pady=(2, 12))
+
+        def charger(self, carte):
+            self.grille = Grille.depuis_lignes(carte["grille"])
+            self.champ_nom.delete(0, "end"); self.champ_nom.insert(0, carte["nom"])
+            self.champ_auteur.delete(0, "end"); self.champ_auteur.insert(0, carte["auteur"])
+            if carte["theme"] in THEMES:
+                self.champ_theme.set(carte["theme"])
+            self.champ_l.delete(0, "end"); self.champ_l.insert(0, str(self.grille.largeur))
+            self.champ_h.delete(0, "end"); self.champ_h.insert(0, str(self.grille.hauteur))
+            self.redessiner()
+            self.verifier(silencieux=True)
+            self.dire(f"« {carte['nom']} » ouverte.", "#9fd4a0")
+
+        def exporter(self):
+            erreurs, _ = valider(self.grille)
+            texte = exporter(self.champ_nom.get(), self.champ_theme.get(),
+                             self.champ_auteur.get(), self.grille)
+
+            fen = tk.Toplevel(self.r)
+            fen.title("À copier dans assets/cartes.txt")
+            fen.configure(bg="#22262f")
+            fen.geometry("860x560")
+
+            if erreurs:
+                # On exporte quand même — le travail n'est jamais perdu — mais
+                # on prévient clairement que le jeu refusera la carte en l'état.
+                tk.Label(fen, text="⚠️  " + "   ".join(erreurs), bg="#5c2b2b",
+                         fg="#ffd9d9", pady=6, wraplength=820).pack(fill="x")
+
+            zone = tk.Text(fen, wrap="none", font=("Consolas", 10),
+                           bg="#12151c", fg="#e8ecf4", insertbackground="#fff")
+            barre_h = tk.Scrollbar(fen, orient="horizontal", command=zone.xview)
+            zone.configure(xscrollcommand=barre_h.set)
+            zone.insert("1.0", texte)
+            barre_h.pack(side="bottom", fill="x")
+            zone.pack(fill="both", expand=True, padx=10, pady=10)
+
+            actions = tk.Frame(fen, bg="#22262f", pady=8)
+            actions.pack(fill="x")
+
+            def copier():
+                self.r.clipboard_clear()
+                self.r.clipboard_append(texte)
+                bouton_copier.configure(text="✅ Copié !")
+                fen.after(1400, lambda: bouton_copier.configure(text="📋 Copier"))
+
+            def enregistrer():
+                chemin = filedialog.asksaveasfilename(
+                    title="Ajouter à un catalogue", defaultextension=".txt",
+                    filetypes=[("Catalogue", "*.txt")])
+                if not chemin:
+                    return
+                try:
+                    # On AJOUTE à la fin plutôt que d'écraser : le catalogue
+                    # contient les autres cartes, les perdre serait pire que
+                    # tout.
+                    with open(chemin, "a", encoding="utf-8") as f:
+                        f.write("\n" + texte)
+                    self.dire(f"Ajoutée à {chemin}", "#9fd4a0")
+                    fen.destroy()
+                except OSError as err:
+                    messagebox.showerror("Écriture impossible", str(err))
+
+            bouton_copier = tk.Button(actions, text="📋 Copier", command=copier,
+                                      bg="#3d6ea8", fg="#fff", relief="flat",
+                                      padx=16, pady=5)
+            bouton_copier.pack(side="left", padx=10)
+            tk.Button(actions, text="➕ Ajouter à un fichier…", command=enregistrer,
+                      bg="#3a4152", fg="#fff", relief="flat", padx=16, pady=5).pack(side="left")
+
+    racine = tk.Tk()
+    Editeur(racine)
+    racine.mainloop()
+
+
+if __name__ == "__main__":
+    lancer()
