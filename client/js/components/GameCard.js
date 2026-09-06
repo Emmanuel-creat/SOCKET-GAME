@@ -8,9 +8,12 @@ import { GAME_STATE, LABELS } from '/shared/constants.js';
 /**
  * @param {object} game Entrée de games.json.
  * @param {(game: object) => void} onEnter Appelé quand l'utilisateur clique « Entrer ».
+ * @param {(game: object) => void} [onSolo] Appelé pour un lancement direct en solo.
+ *   N'apparaît que si `game.joueursMin === 1` (le jeu accepte un joueur unique).
  */
-export function GameCard(game, onEnter) {
+export function GameCard(game, onEnter, onSolo) {
   const available = game.etat === GAME_STATE.AVAILABLE;
+  const soloOk = available && game.joueursMin === 1 && typeof onSolo === 'function';
 
   // Couverture : utilise l'image si le fichier existe vraiment, sinon retombe sur
   // l'emoji. On ne peut pas savoir à l'avance si /assets/cover.png a été fourni —
@@ -41,7 +44,16 @@ export function GameCard(game, onEnter) {
         `👥 ${game.joueursMin === game.joueursMax ? game.joueursMin : `${game.joueursMin} à ${game.joueursMax}`} joueurs`,
       ]),
       available
-        ? el('button', { className: 'btn btn--primary', onClick: () => onEnter(game) }, ['Entrer'])
+        ? el('div', { className: 'game-card__actions' }, [
+            el('button', { className: 'btn btn--primary', onClick: () => onEnter(game) }, ['Entrer']),
+            soloOk
+              ? el('button', {
+                  className: 'btn btn--ghost game-card__solo',
+                  title: 'Lancer une partie sans salon, seul contre le jeu',
+                  onClick: () => onSolo(game),
+                }, ['🎮 Jouer en solo'])
+              : null,
+          ].filter(Boolean))
         : el('p', { className: 'game-card__dev-note' }, ['Ce jeu est actuellement en développement.']),
     ]),
   ]);

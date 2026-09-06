@@ -29,7 +29,7 @@ export class PlayView {
       games.length === 0
         ? el('div', { className: 'empty' }, [el('span', { className: 'empty__icon' }, ['🕹️']), 'Chargement du catalogue…'])
         : el('div', { className: 'games-grid' },
-            games.map((game) => GameCard(game, () => this.enterGame(game)))),
+            games.map((game) => GameCard(game, () => this.enterGame(game), (g) => this.enterSolo(g)))),
     );
   }
 
@@ -45,5 +45,28 @@ export class PlayView {
       return;
     }
     openCreateRoomModal({ socket: this.socket, game });
+  }
+
+  /**
+   * Lancement DIRECT en solo : on court-circuite le salon et le serveur en
+   * posant nous-mêmes `activeGame` avec un contexte marqué `solo:true`. La
+   * GameView reconnaît ce contexte et branche des callbacks locaux (pas de
+   * socket, pas de fin de partie côté serveur) ; le bouton « Quitter » du
+   * jeu ramène ici.
+   */
+  enterSolo(game) {
+    const me = store.get('me') ?? { id: 'solo-' + Math.random().toString(36).slice(2, 8), pseudo: 'Joueur', avatar: '🙂' };
+    const soloMe = { id: me.id, pseudo: me.pseudo, avatar: me.avatar };
+    store.set('activeGame', {
+      gameId: game.id,
+      context: {
+        solo: true,
+        roomId: 'solo',
+        roomName: `Solo — ${game.nom}`,
+        hostId: soloMe.id,
+        players: [soloMe],
+      },
+    });
+    bus.emit('app:navigate', 'game');
   }
 }

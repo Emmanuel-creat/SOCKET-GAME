@@ -37,6 +37,9 @@
 .game-card__desc { color: var(--text-dim); font-size: 0.88rem; margin: 0; flex: 1; }
 .game-card__meta { font-size: 0.8rem; color: var(--text-faint); }
 .game-card__dev-note { font-size: 0.8rem; color: var(--warning); font-style: italic; margin: 0; }
+.game-card__actions { display: flex; flex-wrap: wrap; gap: var(--gap-s); }
+.game-card__actions .btn { flex: 1 1 auto; }
+.game-card__solo { font-size: 0.85rem; }
 
 /* --- Vue Salons -------------------------------------------------------------- */
 .rooms-toolbar { display: flex; gap: var(--gap-s); margin-bottom: var(--gap-m); flex-wrap: wrap; }

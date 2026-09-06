@@ -20,24 +20,52 @@ export class GameView {
       if (activeGame) this.mountGame(activeGame);
       else this.unmountGame();
     });
+
+    // Sortie propre du mode solo si l'utilisateur navigue ailleurs (barre
+    // latérale). En multi le jeu vit côté serveur — ne pas y toucher.
+    bus.on('view:changed', (view) => {
+      if (view === 'game') return;
+      const active = store.get('activeGame');
+      if (active?.context?.solo) store.set('activeGame', null);
+    });
   }
 
   async mountGame({ gameId, context }) {
-    const me = store.get('me');
+    const meFromStore = store.get('me');
     const gameContainer = el('div', { className: 'game-screen' });
     replaceChildrenOf(this.container, gameContainer);
 
+    // En solo, la vue est lancée par PlayView sans passer par le serveur : ni
+    // salon, ni socket, ni relais. Le joueur EST l'hôte (context.hostId ===
+    // players[0].id). La fin de partie ramène simplement à l'écran « Jouer »
+    // au lieu d'un endGame réseau.
+    const solo = context?.solo === true;
+    const me = solo ? (context.players?.[0] ?? meFromStore) : meFromStore;
+    const contextJeu = solo
+      ? {
+          ...context,
+          me,
+          socket: null,
+          sendMessage: () => {},
+          onMessage: () => () => {},
+          onEnd: () => {
+            store.set('activeGame', null);
+            bus.emit('app:navigate', 'play');
+          },
+        }
+      : {
+          ...context,
+          me,
+          socket: this.socket,
+          // Communication en jeu : envoi (ciblé ou diffusé) + abonnement aux messages.
+          sendMessage: (data, to = null) => this.socket.sendGameMessage(data, to),
+          onMessage: (handler) => bus.on('game:message', handler),
+          // Le module signale la fin de partie : le serveur ramène tout le salon.
+          onEnd: (result) => this.socket.endGame(result),
+        };
+
     try {
-      await this.loader.load(gameId, gameContainer, {
-        ...context,
-        me,
-        socket: this.socket,
-        // Communication en jeu : envoi (ciblé ou diffusé) + abonnement aux messages.
-        sendMessage: (data, to = null) => this.socket.sendGameMessage(data, to),
-        onMessage: (handler) => bus.on('game:message', handler),
-        // Le module signale la fin de partie : le serveur ramène tout le salon.
-        onEnd: (result) => this.socket.endGame(result),
-      });
+      await this.loader.load(gameId, gameContainer, contextJeu);
     } catch (error) {
       // Module absent ou incomplet : écran d'attente + retour possible.
       console.warn(`[arcade] Module de jeu indisponible (${gameId}) :`, error.message);
