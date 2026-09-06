@@ -124,20 +124,41 @@ P   ##      !
 ####~#~~#~#~#~~#~#~#~~#~~#~#~~#~#~~#irr#~#rr#r#rr#r#rr#r#r#######
 
 
-[La Fonderie]
-@theme crepuscule
-@auteur Manu
+[Level inter]
+@theme prairie
+@auteur manu
 
-            !            !                    !                     !
-            !            !                    !                     !
-     4      !     C      !        5           !          8          !            2
-            !            !                    !                     !
-   ==       !    ===     !      =====         !       ===           !        ====
-            !            !                    !                     !
-        K        *              K         *              K      *
- P                                                                                     D
-#####  ####   ######   ####    #######   ####     ######   ####    #######    ###   #######
-#####~~####~~~######~~~####~~~~#######~~~####~~~~~######~~~####~~~~#######~~~~###~~~#######
+#                                                                                i
+#                                                                                i
+#                                                                                i
+#                                                                                i
+#                                                                                i
+# t C                                                                            i
+#    K        C                                                                  i
+########x                 C    C     C                 C                         i
+#         B   B   B   B i i   i      i     i C                                 D i
+#        ^ ^^^ ^^^ ^^^          i C    i     #x#x      #ww# s   s s s   s i   i#ii
+#                           i      i     i       # # #        s       s          #
+#                                                                                #
+#                                                                                #
+#                                                                                #
+#                                                                                #
+#                                                                                #
+#                                                                                #
+#                                                    T    T  T  T   T   T   T    #
+#                                                                                #
+#                                                                                #
+#                                                                                #
+#                                                                                #
+#                                                                                #
+#                                                                                #
+#                                                                                #
+#           C                                                                    #
+#        C Z                   C        C     C                                  #
+#        =Z =         C        =  =  M  =  M  =  M  K                            #
+#    C =Z    Z=     Z=ZZ=     =                     #        C    C      C   C   #
+# P  Z=        Z=  =     =   =                      #   C                      t #
+#####            ZZ        !=                       #rr~r~r~rr~~r~r~r~r~r~~rr~####
 
 
 [Le Piège]
