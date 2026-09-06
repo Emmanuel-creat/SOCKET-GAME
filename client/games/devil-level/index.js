@@ -6,9 +6,10 @@
  * qu'une fois par manche — le réutiliser évite d'envoyer des centaines de
  * plateformes trente fois par seconde.
  *
- * Contrôles : ← → pour se déplacer, Espace pour sauter, Maj pour le dash,
- * E pour utiliser un bonus offensif. Les lettres sont lues via `e.key` (la
- * lettre réellement produite) et non `e.code`, sans quoi un clavier AZERTY
+ * Contrôles (AZERTY) : Q et D pour se déplacer, Z pour sauter, A pour le
+ * dash, Maj pour utiliser un bonus offensif. Les flèches et Espace restent
+ * acceptés comme secours. Les lettres sont lues via `e.key` (la lettre
+ * réellement produite) et non `e.code`, sans quoi un clavier AZERTY
  * jouerait avec les mauvaises touches.
  */
 
@@ -164,10 +165,10 @@ export class DevilLevelUI {
           this.retourCarte = h('div', { className: 'dl__retour' }),
         ]),
         h('div', { className: 'dl__aide' }, [
-          h('div', {}, [h('b', {}, '← →'), ' se déplacer']),
-          h('div', {}, [h('b', {}, 'Espace'), ' sauter']),
-          h('div', {}, [h('b', {}, 'Maj'), ' dash']),
-          h('div', {}, [h('b', {}, 'E'), ' utiliser un bonus (gel, tornade, bombe)']),
+          h('div', {}, [h('b', {}, 'Q D'), ' se déplacer  (ou ← →)']),
+          h('div', {}, [h('b', {}, 'Z'), ' sauter  (ou Espace)']),
+          h('div', {}, [h('b', {}, 'A'), ' dash']),
+          h('div', {}, [h('b', {}, 'Maj'), ' utiliser un bonus (gel, tornade, bombe)']),
         ]),
         h('button', { className: 'dl__btn dl__btn--jouer', type: 'button', onClick: () => this.lancer() }, '▶️ Lancer la course'),
       );
@@ -349,15 +350,22 @@ export class DevilLevelUI {
   /* ============================== entrées ============================== */
 
   brancherEntrees() {
-    // `e.key` pour les lettres : sur AZERTY, la touche marquée Z renvoie le
-    // code « KeyW ». Écouter les codes ferait jouer avec les mauvaises touches.
+    // Mapping AZERTY : Q gauche, D droite, Z saut, A dash, Maj bonus.
+    // Les flèches et Espace restent acceptés en secours pour ne fâcher personne.
+    // `e.key` (et non `e.code`) : sur AZERTY, la touche marquée Z renvoie le
+    // code « KeyW » — écouter les codes ferait jouer avec les mauvaises touches.
     this.surTouche = (e) => {
       const k = e.key;
-      if (k === ' ' || k === 'Spacebar') { e.preventDefault(); if (!e.repeat) this.agir({ t: 'entree', patch: { saut: true } }); return; }
-      if (k === 'Shift') { e.preventDefault(); if (!e.repeat) this.agir({ t: 'dash' }); return; }
-      if (k.toLowerCase && k.toLowerCase() === 'e') { if (!e.repeat) this.agir({ t: 'pouvoir' }); return; }
+      const kl = k.length === 1 ? k.toLowerCase() : k;
+      if (k === ' ' || k === 'Spacebar' || kl === 'z') {
+        e.preventDefault();
+        if (!e.repeat) this.agir({ t: 'entree', patch: { saut: true } });
+        return;
+      }
+      if (kl === 'a') { e.preventDefault(); if (!e.repeat) this.agir({ t: 'dash' }); return; }
+      if (k === 'Shift') { e.preventDefault(); if (!e.repeat) this.agir({ t: 'pouvoir' }); return; }
       if (k === 'ArrowLeft' || k === 'ArrowRight') e.preventDefault();
-      this.touches.add(k.length === 1 ? k.toLowerCase() : k);
+      this.touches.add(kl);
       this.majDirection();
     };
     this.surRelache = (e) => {
@@ -372,7 +380,9 @@ export class DevilLevelUI {
   /** N'envoie que si la direction a CHANGÉ : le coût serveur suit le nombre de messages. */
   majDirection() {
     const k = this.touches;
-    const gauche = k.has('ArrowLeft') || k.has('q') || k.has('a');
+    // « a » a changé de rôle (dash), il ne mappe donc PLUS vers gauche : le
+    // laisser dans la liste dashferait un pas de côté involontaire à chaque dash.
+    const gauche = k.has('ArrowLeft') || k.has('q');
     const droite = k.has('ArrowRight') || k.has('d');
     const signature = `${gauche}|${droite}`;
     if (signature === this.derniereEntree) return;
@@ -429,8 +439,8 @@ export class DevilLevelUI {
       chronoVisible ? h('span', { className: `dl__chrono${moi?.arrive ? ' dl__chrono--fini' : ''}` },
         `⏱️ ${formaterChrono(msChrono)}`) : null,
       h('span', { className: `dl__dash${dashPret ? ' dl__dash--pret' : ''}` },
-        dashPret ? '💨 Dash prêt (Maj)' : `💨 ${Math.round((moi?.dashRatio ?? 0) * 100)} %`),
-      moi?.bonus ? h('span', { className: 'dl__bonus' }, `${BONUS[moi.bonus].icone} ${BONUS[moi.bonus].nom} — touche E`) : null,
+        dashPret ? '💨 Dash prêt (A)' : `💨 ${Math.round((moi?.dashRatio ?? 0) * 100)} %`),
+      moi?.bonus ? h('span', { className: 'dl__bonus' }, `${BONUS[moi.bonus].icone} ${BONUS[moi.bonus].nom} — touche Maj`) : null,
       moi?.bouclier ? h('span', { className: 'dl__etat' }, '🛡️ Bouclier') : null,
       moi?.doubleSaut ? h('span', { className: 'dl__etat' }, '🦅 Double saut') : null,
       moi?.ghost ? h('span', { className: 'dl__etat' }, '👻 Ghost') : null,
