@@ -44,7 +44,7 @@ const TAMPON_SAUT_MS = 120;                // saut mémorisé juste avant d'atte
 
 export const DASH_VITESSE = 620;
 export const DASH_MS = 180;
-export const DASH_RECHARGE_MS = 1400;
+export const DASH_RECHARGE_MS = 10000;
 
 // Manche.
 export const RESPAWN_MS = 900;             // « animation courte » avant de réapparaître
@@ -568,9 +568,10 @@ export class DevilLevelEngine {
 
     // Gravité — inversée si le joueur a franchi un bloc `g`.
     if (e.surEchelle) {
-      // Sur une échelle on monte ou on descend, sans chute libre.
-      e.vy = (e.entree.saut ? 190 : 0) - (gele ? 0 : 0);
-      if (!e.entree.saut) e.vy = Math.max(-140, e.vy - 90);
+      // Sur une échelle : on monte QUAND on maintient saut ; sinon on
+      // s'immobilise sur le barreau. Aucune chute libre — le joueur reste
+      // exactement où il est tant qu'il ne relance pas le saut.
+      e.vy = e.entree.saut ? 190 : 0;
     } else if (!dash) {
       const g = (e.vy * sens > 0 ? GRAVITE : GRAVITE_CHUTE) * sens;
       e.vy -= g * dt;

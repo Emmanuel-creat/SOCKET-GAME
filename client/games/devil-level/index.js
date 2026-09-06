@@ -354,10 +354,11 @@ export class DevilLevelUI {
     // Les flèches et Espace restent acceptés en secours pour ne fâcher personne.
     // `e.key` (et non `e.code`) : sur AZERTY, la touche marquée Z renvoie le
     // code « KeyW » — écouter les codes ferait jouer avec les mauvaises touches.
+    const estSaut = (k, kl) => (k === ' ' || k === 'Spacebar' || kl === 'z');
     this.surTouche = (e) => {
       const k = e.key;
       const kl = k.length === 1 ? k.toLowerCase() : k;
-      if (k === ' ' || k === 'Spacebar' || kl === 'z') {
+      if (estSaut(k, kl)) {
         e.preventDefault();
         if (!e.repeat) this.agir({ t: 'entree', patch: { saut: true } });
         return;
@@ -368,9 +369,14 @@ export class DevilLevelUI {
       this.touches.add(kl);
       this.majDirection();
     };
+    // Sur relâchement, la seule touche à annoncer explicitement est le saut :
+    // le moteur lit `entree.saut` en continu (pour l'ascension d'échelle) et
+    // reste bloqué en montée sans un signal de fin.
     this.surRelache = (e) => {
       const k = e.key;
-      this.touches.delete(k.length === 1 ? k.toLowerCase() : k);
+      const kl = k.length === 1 ? k.toLowerCase() : k;
+      if (estSaut(k, kl)) { this.agir({ t: 'entree', patch: { saut: false } }); return; }
+      this.touches.delete(kl);
       this.majDirection();
     };
     window.addEventListener('keydown', this.surTouche);
