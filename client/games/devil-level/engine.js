@@ -227,6 +227,11 @@ export class DevilLevelEngine {
     // n'attend derrière — un joueur qui explore ou apprend une carte doit
     // pouvoir prendre son temps sans se faire couper.
     this.solo = !!options.solo;
+    // Interrupteurs à disposition de l'hôte : couper les bonus (les pastilles
+    // ne réapparaissent plus et Maj ne fait rien) ou les événements globaux
+    // (darkness, earthquake…) pour une course pure et prévisible.
+    this.bonusActifs = options.bonusActifs !== false;
+    this.evenementsActifs = options.evenementsActifs !== false;
     /*
      * Les cartes jouées. Le Host peut passer ses propres matrices ; à défaut on
      * prend celles fournies. Une carte invalide est refusée DÈS LA CRÉATION,
@@ -426,6 +431,10 @@ export class DevilLevelEngine {
   }
 
   majEvenement(t) {
+    // Interrupteur du menu : aucune annonce, aucun événement, ni cette
+    // manche ni les suivantes. On ne bloque pas les événements EN COURS —
+    // il n'y en a pas si le drapeau était faux dès le départ.
+    if (!this.evenementsActifs) return;
     if (this.evenement && t >= this.evenement.finit) {
       this.dire(`✅ ${this.evenement.nom} terminé.`);
       this.evenement = null;
@@ -724,6 +733,7 @@ export class DevilLevelEngine {
   }
 
   ramasserBonus(id, e, t) {
+    if (!this.bonusActifs) return;
     for (const b of this.niveau.bonus) {
       if (b.pris && t < b.reapparition) continue;
       if (b.pris) b.pris = false;
@@ -903,8 +913,10 @@ export class DevilLevelEngine {
         tombee: !!tu.tombee, cassee: !!tu.cassee, revelee: !!tu.revelee,
         armee: !!tu.etat,
       }));
-    base.bonusAuSol = this.niveau.bonus.filter((b) => !b.pris)
-      .map((b) => ({ id: b.id, type: b.type, x: b.x + TUILE / 2, y: b.y + TUILE / 2 }));
+    base.bonusAuSol = this.bonusActifs
+      ? this.niveau.bonus.filter((b) => !b.pris)
+          .map((b) => ({ id: b.id, type: b.type, x: b.x + TUILE / 2, y: b.y + TUILE / 2 }))
+      : [];
     base.bombes = this.bombes.map((b) => ({ id: b.id, x: Math.round(b.x), y: Math.round(b.y), dans: Math.max(0, b.explosionA - t) }));
     base.effets = this.effets;
 

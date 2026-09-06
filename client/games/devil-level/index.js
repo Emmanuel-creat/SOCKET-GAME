@@ -79,6 +79,10 @@ export class DevilLevelUI {
     this.traceGraine = null;
     this.touches = new Set();
     this.manches = MANCHES_DEFAUT;
+    // Interrupteurs de manche : présents dans le menu, ils s'appliquent à
+    // TOUTES les manches à venir. Par défaut, on garde la formule complète.
+    this.bonusActifs = true;
+    this.evenementsActifs = true;
     this.catalogue = [];        // rempli depuis assets/cartes.txt
     this.cartesChoisies = [];
     this.carteCustom = null;
@@ -127,6 +131,36 @@ export class DevilLevelUI {
             type: 'button', className: `dl__segbtn${m === this.manches ? ' dl__segbtn--actif' : ''}`,
             onClick: () => { this.manches = m; refaire(); },
           }, String(m)))),
+        ]),
+        h('div', { className: 'dl__reglage' }, [
+          h('label', {}, '🎁 Bonus sur la carte'),
+          h('div', { className: 'dl__seg' }, [
+            h('button', {
+              type: 'button',
+              className: `dl__segbtn${this.bonusActifs ? ' dl__segbtn--actif' : ''}`,
+              onClick: () => { this.bonusActifs = true; refaire(); },
+            }, 'Oui'),
+            h('button', {
+              type: 'button',
+              className: `dl__segbtn${!this.bonusActifs ? ' dl__segbtn--actif' : ''}`,
+              onClick: () => { this.bonusActifs = false; refaire(); },
+            }, 'Non'),
+          ]),
+        ]),
+        h('div', { className: 'dl__reglage' }, [
+          h('label', {}, '⚠️ Événements (Darkness, Chaos…)'),
+          h('div', { className: 'dl__seg' }, [
+            h('button', {
+              type: 'button',
+              className: `dl__segbtn${this.evenementsActifs ? ' dl__segbtn--actif' : ''}`,
+              onClick: () => { this.evenementsActifs = true; refaire(); },
+            }, 'Oui'),
+            h('button', {
+              type: 'button',
+              className: `dl__segbtn${!this.evenementsActifs ? ' dl__segbtn--actif' : ''}`,
+              onClick: () => { this.evenementsActifs = false; refaire(); },
+            }, 'Non'),
+          ]),
         ]),
         h('div', { className: 'dl__reglage' }, [
           h('label', {}, 'Cartes jouées'),
@@ -264,7 +298,11 @@ export class DevilLevelUI {
       // Mode solo dès qu'il n'y a qu'un joueur : le moteur retire alors le
       // filet des 100 s, sans quoi la course serait coupée d'office.
       const solo = (this.ctx.players?.length ?? 1) <= 1;
-      this.moteur = new DevilLevelEngine(this.ctx.players, { manches: this.manches, cartes, solo });
+      this.moteur = new DevilLevelEngine(this.ctx.players, {
+        manches: this.manches, cartes, solo,
+        bonusActifs: this.bonusActifs,
+        evenementsActifs: this.evenementsActifs,
+      });
     } catch (err) { this.message(`⚠️ ${err.message}`); return; }
     this.moteur.demarrer();
     this.timers.boucle = setInterval(() => this.boucleHost(), TICK_MS);
