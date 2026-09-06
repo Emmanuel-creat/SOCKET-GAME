@@ -32,9 +32,12 @@ export const JOUEUR_L = 26;
 export const JOUEUR_H = 38;
 
 // Déplacement — volontairement nerveux et précis.
-const VITESSE = 260;                       // unités/seconde
-const ACCEL = 2600;
-const FREIN_SOL = 2400;
+// Sensibilité globale abaissée de 15 % (vitesse et réactivité) sur retour
+// utilisateur : le perso avait tendance à échapper au contrôle fin. On tire
+// aussi le frein sol au même facteur pour garder les temps d'arrêt cohérents.
+const VITESSE = 221;                       // unités/seconde (260 × 0.85)
+const ACCEL = 2210;                        // 2600 × 0.85
+const FREIN_SOL = 2040;                    // 2400 × 0.85
 const FREIN_AIR = 900;
 export const SAUT = 560;
 const GRAVITE = 1700;
@@ -470,11 +473,17 @@ export class DevilLevelEngine {
       const d = tu.def;
 
       if (d.mobile) {
+        // Delta CE TICK : sert au drag horizontal des passagers dans atterrir().
+        // Sans ça, `atterrir` calculait delta = (tu.x - dernierX_dernier_atterrissage),
+        // qui pouvait valoir des dizaines de pixels si le joueur avait quitté puis
+        // rejoint la plateforme entretemps — et le personnage se faisait éjecter.
+        const oldX = tu.x;
         const amplitude = (d.amplitude ?? 2.2) * TUILE;
         const periode = 2600;
         const dep = Math.sin((t / periode) * Math.PI * 2 * vt + (tu.lx + tu.ly) * 0.7) * amplitude;
         tu.x = tu.x0 + (d.mobile === 'x' ? dep : 0);
         tu.y = tu.y0 + (d.mobile === 'y' ? dep : 0);
+        tu.deltaX = tu.x - oldX;
       }
 
       if (d.cyclique) {
@@ -671,9 +680,10 @@ export class DevilLevelEngine {
       tu.cassee = t;
       this.effets.push({ id: ++this.uid, type: 'casse', x: tu.x + TUILE / 2, y: tu.y, at: t });
     }
-    // Une plateforme mobile entraîne ce qui se tient dessus.
-    if (d.mobile === 'x') e.x += (tu.x - (tu.dernierX ?? tu.x));
-    tu.dernierX = tu.x;
+    // Une plateforme mobile entraîne ce qui se tient dessus, avec le déplacement
+    // effectif de CE tick (majTuiles écrit `deltaX`) — jamais un cumul depuis le
+    // dernier atterrissage, qui téléporterait le joueur au retour sur la plateforme.
+    if (d.mobile === 'x') e.x += tu.deltaX ?? 0;
   }
 
   /**
