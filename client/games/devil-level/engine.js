@@ -316,7 +316,7 @@ export class DevilLevelEngine {
         gelJusqua: 0, invulnerableJusqua: 0,
         glace: false, collant: false, surEchelle: false, graviteInverse: false,
         mort: false, respawnA: 0, causeMort: null,
-        checkpoint: { x: dep.x, y: dep.y + 2 },
+        checkpoint: { x: dep.x, y: dep.y + 2 }, checkpointId: null,
         arrive: false, rang: null, temps: null,
         entree: { gauche: false, droite: false, saut: false, dash: false, pouvoir: false },
       };
@@ -600,6 +600,10 @@ export class DevilLevelEngine {
     // évite de rester coincé dans un angle entre deux tuiles.
     e.x += e.vx * dt;
     this.resoudreAxe(e, 'x', t);
+    // On mémorise la position AVANT le déplacement vertical : le résolveur
+    // Y en a besoin pour savoir si le joueur ARRIVE d'au-dessus d'une
+    // plateforme (auquel cas il doit atterrir, quelle que soit sa vitesse).
+    e.yAvantY = e.y;
     e.y += e.vy * dt;
     this.resoudreAxe(e, 'y', t);
 
@@ -646,8 +650,12 @@ export class DevilLevelEngine {
       } else {
         const dessus = tu.y + tu.h;
         if (e.vy <= 0) {
-          // On tombe : on ne se pose que si les pieds arrivaient d'au-dessus.
-          if (platOnly && e.y < dessus - 14) continue;
+          // On tombe : on ne se pose sur une plateforme QUE si les pieds
+          // étaient à ou au-dessus du niveau du dessus AU TICK PRÉCÉDENT.
+          // Une fenêtre en pixels ne suffit pas : après un trampoline la
+          // vitesse de chute atteint 900 u/s, soit ~30 px par tick — le
+          // joueur traverserait sinon les plateformes fixes en un seul tick.
+          if (platOnly && (e.yAvantY ?? e.y) < dessus) continue;
           e.y = dessus;
           this.atterrir(e, tu, t);
         } else {
@@ -768,8 +776,15 @@ export class DevilLevelEngine {
   }
 
   majCheckpoint(e) {
+    // Règle : c'est le DERNIER checkpoint traversé qui fait foi, même s'il est
+    // situé plus en arrière que le précédent. Utile pour les cartes en boucle
+    // ou en labyrinthe où revenir en arrière est une progression valide.
     for (const c of this.niveau.checkpoints) {
-      if (e.x >= c.x && c.x > e.checkpoint.x) e.checkpoint = { x: c.x, y: c.y };
+      if (!chevauche(e.x, e.y, JOUEUR_L, JOUEUR_H, c.x, c.y, TUILE, TUILE)) continue;
+      if (e.checkpointId === c.id) continue;
+      e.checkpoint = { x: c.x, y: c.y };
+      e.checkpointId = c.id;
+      this.effets.push({ id: ++this.uid, type: 'bonus', x: c.x + TUILE / 2, y: c.y, at: this.now() });
     }
   }
 
