@@ -42,6 +42,20 @@ function h(tag, props = {}, enfants = []) {
 const COULEURS = ['#ff5c5c', '#4fc3f7', '#66d17a', '#ffd166', '#c56cf0', '#ff9f43', '#2fe0d0', '#ff6fa5',
   '#8bd450', '#7d8bff', '#e0c341', '#ff8a5c', '#5ce1e6', '#d76cf0', '#9fd356', '#ffb4a2'];
 
+/**
+ * Format d'un chronomètre en millisecondes → « mm:ss.cs ».
+ * Deux décimales suffisent pour un run de plateforme — au-delà, l'affichage
+ * scintille sans que l'œil suive.
+ */
+function formaterChrono(ms) {
+  const total = Math.max(0, Math.floor(ms));
+  const min = Math.floor(total / 60000);
+  const sec = Math.floor((total % 60000) / 1000);
+  const cs = Math.floor((total % 1000) / 10);
+  const pad = (n, w) => String(n).padStart(w, '0');
+  return `${min}:${pad(sec, 2)}.${pad(cs, 2)}`;
+}
+
 /** Libellés des causes de mort : le joueur doit comprendre ce qui l'a tué. */
 const CAUSES = {
   pics: '⚠️ Empalé sur des pics',
@@ -246,7 +260,10 @@ export class DevilLevelUI {
         ? [this.carteCustom]
         : this.cartesChoisies.map((nom) => carteParNom(this.catalogue, nom)).filter(Boolean);
       if (!cartes.length) { this.message('⚠️ Aucune carte sélectionnée.'); return; }
-      this.moteur = new DevilLevelEngine(this.ctx.players, { manches: this.manches, cartes });
+      // Mode solo dès qu'il n'y a qu'un joueur : le moteur retire alors le
+      // filet des 100 s, sans quoi la course serait coupée d'office.
+      const solo = (this.ctx.players?.length ?? 1) <= 1;
+      this.moteur = new DevilLevelEngine(this.ctx.players, { manches: this.manches, cartes, solo });
     } catch (err) { this.message(`⚠️ ${err.message}`); return; }
     this.moteur.demarrer();
     this.timers.boucle = setInterval(() => this.boucleHost(), TICK_MS);
@@ -399,9 +416,18 @@ export class DevilLevelUI {
     const v = this.vue;
     const moi = v.moi;
     const dashPret = moi?.dashPret;
-    this.bandeau.replaceChildren(
+    // replaceChildren() convertit toute valeur non-Node en texte : un `null`
+    // apparaîtrait littéralement comme « null » dans la barre. On filtre donc
+    // avant d'assigner les enfants.
+    // Chrono : le temps final quand on est arrivé (figé), sinon le temps qui
+    // coule pendant la course. Aucun affichage avant le « GO ! ».
+    const msChrono = moi?.arrive ? (moi.temps ?? 0) : (v.chrono ?? 0);
+    const chronoVisible = moi?.arrive || v.phase === 'course';
+    this.bandeau.replaceChildren(...[
       h('strong', {}, `Manche ${v.manche}/${v.manchesTotal}`),
       v.theme ? h('span', { className: 'dl__theme' }, THEMES[v.theme]?.nom ?? '') : null,
+      chronoVisible ? h('span', { className: `dl__chrono${moi?.arrive ? ' dl__chrono--fini' : ''}` },
+        `⏱️ ${formaterChrono(msChrono)}`) : null,
       h('span', { className: `dl__dash${dashPret ? ' dl__dash--pret' : ''}` },
         dashPret ? '💨 Dash prêt (Maj)' : `💨 ${Math.round((moi?.dashRatio ?? 0) * 100)} %`),
       moi?.bonus ? h('span', { className: 'dl__bonus' }, `${BONUS[moi.bonus].icone} ${BONUS[moi.bonus].nom} — touche E`) : null,
@@ -410,7 +436,7 @@ export class DevilLevelUI {
       moi?.ghost ? h('span', { className: 'dl__etat' }, '👻 Ghost') : null,
       moi?.vitesse ? h('span', { className: 'dl__etat' }, '⚡ Vitesse') : null,
       h('span', { className: 'dl__cls' }, v.classement.slice(0, 4).map((j) => `${j.pseudo} ${j.points}`).join('  ·  ')),
-    );
+    ].filter(Boolean));
 
     // Barre de progression : où en est chacun sur la route.
     if (this.trace) {
@@ -1003,20 +1029,55 @@ export class DevilLevelUI {
       g.fillStyle = '#fff'; g.font = '16px system-ui, sans-serif';
       g.fillText(`Retour au checkpoint dans ${(moi.respawnDans / 1000).toFixed(1)} s`, CAM_L / 2, CAM_H / 2 + 28);
     } else if (moi?.arrive) {
-      g.fillStyle = 'rgba(12,16,26,.8)'; g.fillRect(0, CAM_H / 2 - 56, CAM_L, 112);
+      g.fillStyle = 'rgba(12,16,26,.85)'; g.fillRect(0, CAM_H / 2 - 78, CAM_L, 156);
       g.fillStyle = '#ffd166'; g.font = 'bold 34px system-ui, sans-serif';
-      g.fillText(`${moi.rang}${moi.rang === 1 ? 'er' : 'e'}`, CAM_L / 2, CAM_H / 2 + 12);
+      g.fillText(`🏁 ${moi.rang}${moi.rang === 1 ? 'er' : 'e'}`, CAM_L / 2, CAM_H / 2 - 18);
+      if (moi.temps != null) {
+        g.fillStyle = '#fff'; g.font = 'bold 44px ui-monospace, "SF Mono", Consolas, monospace';
+        g.fillText(`⏱️  ${formaterChrono(moi.temps)}`, CAM_L / 2, CAM_H / 2 + 34);
+      }
     }
     if (v.phase === 'fin-manche' || v.phase === 'fin') {
-      g.fillStyle = 'rgba(12,16,26,.9)'; g.fillRect(0, 0, CAM_L, CAM_H);
+      const finPartie = v.phase === 'fin';
+      g.fillStyle = 'rgba(12,16,26,.92)'; g.fillRect(0, 0, CAM_L, CAM_H);
+
+      // Titre.
       g.fillStyle = '#fff'; g.font = 'bold 28px system-ui, sans-serif';
-      g.fillText(v.phase === 'fin'
+      g.fillText(finPartie
         ? (v.vainqueur ? `${v.vainqueur.pseudo} remporte Devil Level` : 'Partie terminée')
-        : `Fin de la manche ${v.manche}`, CAM_L / 2, 118);
-      g.font = '18px system-ui, sans-serif';
+        : `Fin de la manche ${v.manche}${v.manchesTotal ? ' / ' + v.manchesTotal : ''}`,
+        CAM_L / 2, 74);
+
+      // Grand chrono central.
+      //  — fin de manche : le temps de la MANCHE qui vient de se jouer.
+      //  — fin de partie : le TOTAL cumulé sur toutes les manches.
+      // Sans temps (élimination sur la dernière manche, timeout), on garde le
+      // libellé mais on affiche « — » pour ne pas faire croire à un zéro.
+      const ms = finPartie
+        ? (moi?.tempsTotal ?? 0)
+        : (moi?.temps ?? null);
+      const nManches = finPartie
+        ? (moi?.manchesTerminees ?? 0)
+        : 1;
+      g.fillStyle = '#aab'; g.font = '13px system-ui, sans-serif';
+      g.fillText(finPartie
+        ? `⏱️ TEMPS TOTAL (${nManches} manche${nManches > 1 ? 's' : ''} terminée${nManches > 1 ? 's' : ''})`
+        : '⏱️ TEMPS DE LA MANCHE',
+        CAM_L / 2, 116);
+      g.font = 'bold 84px ui-monospace, "SF Mono", Consolas, monospace';
+      g.fillStyle = finPartie ? '#ffd166' : '#fff';
+      g.strokeStyle = 'rgba(0,0,0,.5)'; g.lineWidth = 6;
+      const texteChrono = ms != null ? formaterChrono(ms) : '—';
+      g.strokeText(texteChrono, CAM_L / 2, 200);
+      g.fillText(texteChrono, CAM_L / 2, 200);
+
+      // Classement compact, sous le chrono.
+      g.font = '15px system-ui, sans-serif';
       v.classement.slice(0, 8).forEach((j, i) => {
         g.fillStyle = i === 0 ? '#ffd166' : '#e8ecff';
-        g.fillText(`${i + 1}. ${this.avatarDe(j.id)} ${j.pseudo} — ${j.points} pts`, CAM_L / 2, 176 + i * 31);
+        const tCol = finPartie ? j.tempsTotal : j.meilleurTemps;
+        const chrono = tCol != null && tCol > 0 ? ` · ⏱️ ${formaterChrono(tCol)}` : '';
+        g.fillText(`${i + 1}. ${this.avatarDe(j.id)} ${j.pseudo} — ${j.points} pts${chrono}`, CAM_L / 2, 260 + i * 26);
       });
     }
   }
@@ -1052,6 +1113,8 @@ const CSS = `
 .dl__btn--jouer{background:#feb854;color:#151005}
 .dl__bandeau{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:.8rem;padding:7px 12px;border-radius:12px;background:rgba(0,0,0,.32);border:1px solid var(--glass-border,rgba(255,255,255,.1))}
 .dl__theme{color:var(--text-dim,#aab)}
+.dl__chrono{padding:2px 9px;border-radius:999px;background:rgba(255,255,255,.08);font-weight:700;font-variant-numeric:tabular-nums;font-family:ui-monospace,"SF Mono",Consolas,monospace;letter-spacing:.02em}
+.dl__chrono--fini{background:rgba(255,209,102,.22);color:#ffd166}
 .dl__dash{padding:2px 9px;border-radius:999px;background:rgba(255,255,255,.08);font-weight:700}
 .dl__dash--pret{background:rgba(255,209,102,.22);color:#ffd166}
 .dl__bonus{padding:2px 9px;border-radius:999px;background:rgba(102,209,122,.2);color:#66d17a;font-weight:700}
@@ -1070,6 +1133,7 @@ const CSS = `
 let instance = null;
 export default {
   get _moteur() { return instance?.moteur ?? null; },
+  get _ui() { return instance; },
   async mount(container, context) {
     instance = new DevilLevelUI(container, context);
     instance.mount();

@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>😈 Devil Level — Solo</title>
+  <style>
+    :root {
+      --text: #e8ecff;
+      --text-dim: #aab;
+      --glass: rgba(255,255,255,.05);
+      --glass-border: rgba(255,255,255,.12);
+    }
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: radial-gradient(circle at 20% 10%, #2a1f4d 0%, #0e0a1f 55%, #05030a 100%);
+      color: var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    header {
+      padding: 10px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid var(--glass-border);
+      background: rgba(0,0,0,.35);
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 1rem; margin: 0; letter-spacing: .04em; }
+    header .meta { color: var(--text-dim); font-size: .78rem; }
+    header .setup {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: .78rem;
+    }
+    header input[type=text] {
+      background: rgba(0,0,0,.4);
+      color: var(--text);
+      border: 1px solid var(--glass-border);
+      border-radius: 6px;
+      padding: 4px 8px;
+      font: inherit;
+      width: 140px;
+    }
+    header button {
+      background: #feb854;
+      color: #151005;
+      border: none;
+      border-radius: 999px;
+      padding: 6px 14px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    #game {
+      flex: 1;
+      min-height: 0;
+      padding: 12px;
+      display: flex;
+    }
+    #fin {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(4,4,10,.85);
+      z-index: 10;
+    }
+    #fin .box {
+      background: rgba(20,16,32,.95);
+      border: 1px solid var(--glass-border);
+      border-radius: 14px;
+      padding: 26px 32px;
+      text-align: center;
+      max-width: 420px;
+    }
+    #fin h2 { margin: 0 0 12px 0; }
+    #fin ol { text-align: left; padding-left: 20px; }
+    #fin button {
+      margin-top: 14px;
+      background: #feb854;
+      color: #151005;
+      border: none;
+      border-radius: 999px;
+      padding: 8px 20px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>😈 Devil Level — Mode solo</h1>
+    <div class="setup">
+      <label>Pseudo <input type="text" id="pseudo" value="Toi" maxlength="12" /></label>
+      <label>Avatar <input type="text" id="avatar" value="🙂" maxlength="2" style="width:44px;text-align:center" /></label>
+      <button id="rejouer" type="button">↻ Recommencer</button>
+    </div>
+    <div class="meta">← → déplacement · Espace saut · Maj dash · E bonus</div>
+  </header>
+
+  <div id="game"></div>
+
+  <div id="fin" role="dialog" aria-modal="true">
+    <div class="box">
+      <h2>🏁 Partie terminée</h2>
+      <div id="fin-corps"></div>
+      <button id="fin-rejouer" type="button">Rejouer</button>
+    </div>
+  </div>
+
+  <script type="module">
+    // Cache-bust ES module imports en dev : sinon les fichiers en cache
+    // navigateur trainent d'une session à l'autre, invisibles.
+    const BUST = new URLSearchParams(location.search).get('v') || String(Date.now());
+    const { default: DevilLevel } = await import(`./index.js?v=${BUST}`);
+
+    const gameEl = document.getElementById('game');
+    const finEl = document.getElementById('fin');
+    const finCorps = document.getElementById('fin-corps');
+    const pseudoEl = document.getElementById('pseudo');
+    const avatarEl = document.getElementById('avatar');
+
+    /**
+     * Contexte factice : le joueur est SEUL et EST l'hôte.
+     * — sendMessage() est un no-op : rien à envoyer à personne.
+     * — onMessage() renvoie un unsubscribe vide : aucun message n'arrivera.
+     * — onEnd() ouvre l'écran de fin.
+     */
+    function contexteSolo() {
+      const me = {
+        id: 'solo-1',
+        pseudo: (pseudoEl.value || 'Toi').slice(0, 12),
+        avatar: (avatarEl.value || '🙂').slice(0, 4),
+      };
+      return {
+        roomId: 'solo',
+        roomName: 'Solo',
+        hostId: me.id,
+        me,
+        players: [me],
+        socket: null,
+        sendMessage() {},
+        onMessage() { return () => {}; },
+        onEnd(info) { montrerFin(info); },
+      };
+    }
+
+    function formaterChrono(ms) {
+      if (ms == null) return '—';
+      const total = Math.max(0, Math.floor(ms));
+      const min = Math.floor(total / 60000);
+      const sec = Math.floor((total % 60000) / 1000);
+      const cs = Math.floor((total % 1000) / 10);
+      const pad = (n, w) => String(n).padStart(w, '0');
+      return `${min}:${pad(sec, 2)}.${pad(cs, 2)}`;
+    }
+
+    function montrerFin(info) {
+      const cls = Array.isArray(info?.classement) ? info.classement : [];
+      const moi = cls[0];
+      const total = moi?.tempsTotal;
+      const nManches = moi?.manchesTerminees ?? 0;
+      const meilleur = moi?.meilleurTemps;
+      const grand = total > 0
+        ? `<div style="margin:16px 0 6px 0;font-size:.72rem;color:var(--text-dim,#aab);letter-spacing:.08em">⏱️ TEMPS TOTAL · ${nManches} MANCHE${nManches > 1 ? 'S' : ''} TERMINÉE${nManches > 1 ? 'S' : ''}</div>
+             <div style="font:800 3rem ui-monospace,monospace;color:#ffd166;line-height:1">${escape(formaterChrono(total))}</div>
+             ${meilleur != null ? `<div style="margin-top:6px;font-size:.78rem;color:var(--text-dim,#aab)">Meilleur tour : <b style="font-family:ui-monospace,monospace;color:#fff">${escape(formaterChrono(meilleur))}</b></div>` : ''}`
+        : '';
+      const lignes = cls.length > 1
+        ? '<ol style="margin:16px 0 0 0;text-align:left">' + cls.map((j) => {
+            const chrono = j.tempsTotal > 0
+              ? ` · <span style="font-family:ui-monospace,monospace">⏱️ ${escape(formaterChrono(j.tempsTotal))}</span>`
+              : '';
+            return `<li><b>${escape(j.pseudo)}</b> — ${j.points} pts · ${j.manches ?? 0} manche(s)${chrono}</li>`;
+          }).join('') + '</ol>'
+        : '';
+      const gagnant = info?.vainqueur?.pseudo ?? moi?.pseudo ?? '—';
+      finCorps.innerHTML = `<p style="margin:0;font-size:1.1rem">🏆 <b>${escape(gagnant)}</b></p>${grand}${lignes}`;
+      finEl.style.display = 'flex';
+    }
+
+    function escape(s) {
+      return String(s ?? '').replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+      }[c]));
+    }
+
+    async function lancer() {
+      finEl.style.display = 'none';
+      await DevilLevel.unmount?.();
+      gameEl.replaceChildren();
+      await DevilLevel.mount(gameEl, contexteSolo());
+    }
+
+    document.getElementById('rejouer').addEventListener('click', lancer);
+    document.getElementById('fin-rejouer').addEventListener('click', lancer);
+
+    lancer();
+  </script>
+</body>
+</html>

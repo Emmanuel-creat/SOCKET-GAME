@@ -217,12 +217,16 @@ export class DevilLevelEngine {
    * @param {{rng?:Function, now?:Function, manches?:number, theme?:string}} options
    */
   constructor(joueurs, options = {}) {
-    if (!Array.isArray(joueurs) || joueurs.length < 2 || joueurs.length > 16) {
-      throw new Error('Devil Level se joue de 2 à 16 joueurs.');
+    if (!Array.isArray(joueurs) || joueurs.length < 1 || joueurs.length > 16) {
+      throw new Error('Devil Level se joue de 1 à 16 joueurs.');
     }
     this.rng = options.rng || Math.random;
     this.horloge = options.now || (() => Date.now());
     this.manchesTotal = borne(Number(options.manches) || MANCHES_DEFAUT, 1, 9);
+    // Mode solo : le filet anti-blocage à 100 s n'a pas de sens quand personne
+    // n'attend derrière — un joueur qui explore ou apprend une carte doit
+    // pouvoir prendre son temps sans se faire couper.
+    this.solo = !!options.solo;
     /*
      * Les cartes jouées. Le Host peut passer ses propres matrices ; à défaut on
      * prend celles fournies. Une carte invalide est refusée DÈS LA CRÉATION,
@@ -243,6 +247,12 @@ export class DevilLevelEngine {
     this.joueurs = joueurs.map((j) => ({
       id: j.id, pseudo: j.pseudo ?? '?',
       points: 0, manchesGagnees: 0, morts: 0, meilleurRang: null,
+      meilleurTemps: null,
+      // Somme des temps de finish, manche après manche. Un temps null
+      // (élimination, timeout) n'est PAS compté : on garde une somme
+      // représentative des courses effectivement terminées.
+      tempsTotal: 0,
+      manchesTerminees: 0,
     }));
     this.manche = 0;
     this.phase = 'attente';     // attente | decompte | course | fin-manche | fin
@@ -396,7 +406,9 @@ export class DevilLevelEngine {
 
     if (this.joueurs.every((j) => this.etats[j.id].arrive)) { this.finirManche(); return; }
 
-    const tropLong = t - this.finDecompte > COURSE_MAX_MS;
+    // En solo, on ne coupe pas la manche au bout de 100 s : le joueur peut
+    // vouloir apprendre la carte, retrouver un chemin, ou simplement finir.
+    const tropLong = !this.solo && t - this.finDecompte > COURSE_MAX_MS;
     const apresPremier = this.premierA && (t - this.premierA > DELAI_APRES_PREMIER_MS);
     if (tropLong || apresPremier) {
       const restants = this.joueurs
@@ -796,6 +808,15 @@ export class DevilLevelEngine {
       j.points += Math.max(1, this.joueurs.length - (a.rang - 1));
       if (a.rang === 1) j.manchesGagnees += 1;
       if (j.meilleurRang === null || a.rang < j.meilleurRang) j.meilleurRang = a.rang;
+      // Meilleur temps : le plus bas des chronos de finish sur toutes les
+      // manches. Un temps null (fin sur timeout) n'entre pas en compte.
+      if (a.temps != null && (j.meilleurTemps == null || a.temps < j.meilleurTemps)) {
+        j.meilleurTemps = a.temps;
+      }
+      if (a.temps != null) {
+        j.tempsTotal += a.temps;
+        j.manchesTerminees += 1;
+      }
     }
     this.phase = 'fin-manche';
     this.finManche = this.now() + FIN_MANCHE_MS;
@@ -816,7 +837,13 @@ export class DevilLevelEngine {
 
   classement() {
     return [...this.joueurs]
-      .map((j) => ({ id: j.id, pseudo: j.pseudo, points: j.points, manches: j.manchesGagnees, morts: j.morts }))
+      .map((j) => ({
+        id: j.id, pseudo: j.pseudo, points: j.points,
+        manches: j.manchesGagnees, morts: j.morts,
+        meilleurTemps: j.meilleurTemps,
+        tempsTotal: j.tempsTotal,
+        manchesTerminees: j.manchesTerminees,
+      }))
       .sort((a, b) => (b.points - a.points) || (b.manches - a.manches) || (a.morts - b.morts));
   }
 
@@ -833,6 +860,9 @@ export class DevilLevelEngine {
       manchesTotal: this.manchesTotal,
       t,
       decompte: this.phase === 'decompte' ? Math.max(0, this.finDecompte - t) : 0,
+      // Chrono de manche : temps écoulé depuis le « GO ! », en millisecondes.
+      // Utile en solo où l'on veut la vitesse ; nul avant que la course démarre.
+      chrono: this.phase === 'course' ? Math.max(0, t - this.finDecompte) : 0,
       classement: this.classement(),
       journal: this.journal.slice(-8),
       vainqueur: this.vainqueur,
@@ -893,6 +923,11 @@ export class DevilLevelEngine {
         gele: t < moi.gelJusqua,
         x: Math.round(moi.x), y: Math.round(moi.y),
         arrive: moi.arrive, rang: moi.rang,
+        // Temps de finish, en ms — chronométré à la sortie, fixé pour toujours.
+        temps: moi.arrive ? (moi.temps ?? null) : null,
+        // Cumul (déjà valorisé côté joueur en fin de manche) pour l'écran final.
+        tempsTotal: this.joueurs.find((j) => j.id === id)?.tempsTotal ?? 0,
+        manchesTerminees: this.joueurs.find((j) => j.id === id)?.manchesTerminees ?? 0,
         progression: borne(moi.x / this.niveau.longueurTotale, 0, 1),
       };
     }
@@ -919,6 +954,8 @@ export class DevilLevelEngine {
         ? `👑 ${this.vainqueur.pseudo} remporte Devil Level (${this.vainqueur.points} pts) !`
         : 'Partie terminée.',
       scores: Object.fromEntries(c.map((j) => [j.pseudo, j.points])),
+      classement: c,
+      vainqueur: this.vainqueur,
       winnerId: this.vainqueur?.id ?? null,
     };
   }

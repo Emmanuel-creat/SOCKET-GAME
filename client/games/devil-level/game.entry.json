@@ -4,7 +4,7 @@
   "description": "Course de plateforme : une seule route, des pièges partout, du sabotage entre joueurs. Premier à la sortie.",
   "icone": "😈",
   "image": "/games/placeholder02/assets/cover.png",
-  "joueursMin": 2,
+  "joueursMin": 1,
   "joueursMax": 16,
   "etat": "disponible",
   "version": "1.0.0",
