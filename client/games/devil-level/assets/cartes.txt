@@ -151,3 +151,21 @@ P   ##      !
 
 
 
+[le marathon]
+@theme glacier
+@auteur pepito
+
+#                                                                                                                                                                            i
+#                                                                                                                                                                            i
+#                            C                                                                                                                                               i
+#                         Z Z Z  Z C                                                                                                                                         i
+#                   C Z Z         Z                                                                                                                                          i
+#                   Z               Z                                                                                                                                        i
+#                  Z                 Z                                                                                                        C                              i
+#              ZZZ                                                C                                              C                                                           i
+#          C Z                         Z    C                     Z Z                                            Z Z  Z                Z  Z  Z                               i
+#          Z                             Z Z  Z           C    Z Z   Z                                         Z        Z      C     Z         Z                   C         i
+#       ZZ                                      Z             Z        Z Z  Z    C                    C  Z Z Z                Z  Z  Z            Z               Z  Z        i
+#     Z                                            C  Z Z  Z Z                Z Z Z             Z  Z    Z                 Z Z                            C  Z  Z      Z      i
+# P  Z                                            Z Z                              Z Z Z    Z  Z      Z                                            Z Z  Z  Z           Z C D i
+#####                                                                                   Z  Z                                                                            ii iii
