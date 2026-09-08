@@ -62,6 +62,33 @@
     !Z  Z  Z ZZ  Z Z!                                l#                              r                       l                              # # # # # # #               O    x     C  x     x  C     C    C    o o  o C    C o o      Co o    D
 #####               rrrrr~r~~r~r~~r~r~~r~r~~r~~r~~r~r##                               ###iiiiiiiiiiiiiiiiiii##                              # # # #t# # #           ##### xx   x x xx         xx x x x x  x x o   o   o o oo     o  o o   o#####
 
+[la brochette]
+@theme volcan
+@auteur macoumba
+
+#                                                iiiiiiiiiiiiiiiiiiiiiiiii
+#                                   t                                   !
+#                                                                       !
+#        x                                                              !
+#        |                                                              !
+#        | C                                                            !
+#        l##i                                                           !
+#        l                                                              !
+#        l   V                                                          !
+#        l                                                              !
+#        l                                                   C          !
+#        l   sow                                           ##           !                                                 Z
+#        l      c                                           ###*        !                                             Z Z
+#        l       c                  C                         ##        !                                            Z
+#        l        c                                            ##C      !                                        Z  Z
+#        l         c                                            ##      !          *          C  *    C      Z  Z
+#        l          c                                            ##**   !     C  ###### * C  * ####rrrrr   Z
+#        l           c                                            ###   !       ##    ###   ####       rrr C                 D
+#        l            c                           g                 ### !     ##        #####            rr              r#####
+#    O   l             c  t            Z  Z  ZZ Zrrr                  ##!  * ##                           rrrrrrrr    rrrr
+######www               ccc        ###                                 #######                                   rrrrrr
+
+
 [Le Piège]
 @theme nuit
 @auteur manu
