@@ -70,8 +70,8 @@
 #                                   t                                   !
 #                                                                       !
 #        x                                                              !
-#        |                                                              !
-#        | C                                                            !
+#                                                                       !
+#          C                                                            !
 #        l##i                                                           !
 #        l                                                              !
 #        l   V                                                          !
@@ -81,9 +81,9 @@
 #        l      c                                           ###*        !                                             Z Z
 #        l       c                  C                         ##        !                                            Z
 #        l        c                                            ##C      !                                        Z  Z
-#        l         c                                            ##      !          *          C  *    C      Z  Z
-#        l          c                                            ##**   !     C  ###### * C  * ####rrrrr   Z
-#        l           c                                            ###   !       ##    ###   ####       rrr C                 D
+#  ||    l         c                                            ##      !          *          C  *    C      Z  Z
+#  ||    l          c                                            ##**   !     C  ###### * C  * ####rrrrr   Z
+#  ||    l           c                                            ###   !       ##    ###   ####       rrr C                 D
 #        l            c                           g                 ### !     ##        #####            rr              r#####
 # P  O   l             c  t            Z  Z  ZZ Zrrr                  ##!  * ##                           rrrrrrrr    rrrr
 ######www               ccc        ###                                 #######                                   rrrrrr
