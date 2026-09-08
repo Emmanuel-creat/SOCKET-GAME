@@ -55,9 +55,9 @@
     !               !                                l#       r r  r C                                       l                              # # # # # # #
     !               !                                l#              r                                       l                              # # # # # # #
     !               !                                l#                r r                                   l                              # # # # # # #
-    !               !                                l#                     C                                l                              #C#C#C#C#C#C#
+    !               !                                l#                     C            T    T    T   T   T l                              #C#C#C#C#C#C#
     !    C          !                                l#                   r r                                l                              # # # # # # #
-    !            C  !g    C                    C     l#                       r     C    T    T    T   T   T l                              # # # # # # #                                 C
+    !            C  !g    C                    C     l#                       r     C                        l                              # # # # # # #                                 C
  P  !    Z     Z    !          C    C    C        C  l#                        r rr r      C     C       C   l                              # # # # # # #             t      C          x x                    C               C         C
     !Z  Z  Z ZZ  Z Z!                                l#                              r                       l                              # # # # # # #               O    x     C  x     x  C     C    C    o o  o C    C o o      Co o    D
 #####               rrrrr~r~~r~r~~r~r~~r~r~~r~~r~~r~r##                               ###iiiiiiiiiiiiiiiiiii##                              # # # #t# # #           ##### xx   x x xx         xx x x x x  x x o   o   o o oo     o  o o   o#####
