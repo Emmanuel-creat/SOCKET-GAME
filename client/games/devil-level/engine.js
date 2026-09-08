@@ -314,7 +314,8 @@ export class DevilLevelEngine {
         bonus: null,
         bouclier: false, ghost: 0, vitesse: 0, doubleSaut: 0,
         gelJusqua: 0, invulnerableJusqua: 0,
-        glace: false, collant: false, surEchelle: false, graviteInverse: false,
+        glace: false, collant: false, surEchelle: false,
+        graviteInverse: false, graviteInverseFin: 0,
         mort: false, respawnA: 0, causeMort: null,
         checkpoint: { x: dep.x, y: dep.y + 2 }, checkpointId: null,
         arrive: false, rang: null, temps: null,
@@ -546,13 +547,18 @@ export class DevilLevelEngine {
         e.mort = false;
         e.x = e.checkpoint.x; e.y = e.checkpoint.y + 6;
         e.vx = 0; e.vy = 0;
-        e.bouclier = false; e.ghost = 0; e.graviteInverse = false;
+        e.bouclier = false; e.ghost = 0; e.graviteInverse = false; e.graviteInverseFin = 0;
         e.invulnerableJusqua = t + 800;
       }
       return;
     }
     const gele = t < e.gelJusqua;
     const dash = t < e.dash.finit;
+    // La gravité inversée s'auto-annule 10 s après le dernier bloc `g`. On la
+    // recalcule à chaque tick pour que le retour à la normale soit indolore
+    // (pas de saut brusque à la 10ᵉ seconde, la gravité reprend simplement
+    // le dessus au prochain calcul).
+    if (e.graviteInverse && t >= e.graviteInverseFin) e.graviteInverse = false;
 
     // Horizontal.
     const vmax = VITESSE * (t < e.vitesse ? VITESSE_BOOST : 1) * (e.collant ? 0.55 : 1);
@@ -648,19 +654,30 @@ export class DevilLevelEngine {
         else e.x = e.x < tu.x ? tu.x - JOUEUR_L : tu.x + tu.l;
         e.vx = 0;
       } else {
+        // Résolution Y : on distingue « chute » (déplacement DANS le sens
+        // de la gravité) et « saut » (déplacement CONTRE elle). Sous grav
+        // inversée, ces deux sens sont symétriques en coordonnées monde,
+        // d'où le calcul des deux faces réceptrices possibles.
+        const inv = e.graviteInverse;
+        const enChute = inv ? e.vy >= 0 : e.vy <= 0;
         const dessus = tu.y + tu.h;
-        if (e.vy <= 0) {
-          // On tombe : on ne se pose sur une plateforme QUE si les pieds
-          // étaient à ou au-dessus du niveau du dessus AU TICK PRÉCÉDENT.
-          // Une fenêtre en pixels ne suffit pas : après un trampoline la
-          // vitesse de chute atteint 900 u/s, soit ~30 px par tick — le
-          // joueur traverserait sinon les plateformes fixes en un seul tick.
-          if (platOnly && (e.yAvantY ?? e.y) < dessus) continue;
-          e.y = dessus;
+        const sousTuile = tu.y - JOUEUR_H;
+        const yAtterrissage = inv ? sousTuile : dessus;
+        const yPlafond = inv ? dessus : sousTuile;
+        if (enChute) {
+          // Grip plateforme : sans ça, à haute vitesse de chute (~30 px/tick
+          // après un trampoline) le joueur traverserait les `=` en un tick.
+          // La règle : au tick précédent, le joueur ne chevauchait PAS déjà.
+          if (platOnly) {
+            const yAvant = e.yAvantY ?? e.y;
+            const dehors = inv ? yAvant <= yAtterrissage : yAvant >= yAtterrissage;
+            if (!dehors) continue;
+          }
+          e.y = yAtterrissage;
           this.atterrir(e, tu, t);
         } else {
-          if (platOnly) continue;                     // on traverse par en bas
-          e.y = tu.y - JOUEUR_H;
+          if (platOnly) continue;
+          e.y = yPlafond;
           e.vy = 0;
         }
       }
@@ -719,7 +736,11 @@ export class DevilLevelEngine {
       }
       if (d.gravite && !immunise) {
         if (t - (e.derniereGravite ?? 0) > 800) {
-          e.graviteInverse = !e.graviteInverse;
+          // La gravité s'inverse pour 10 s ; toucher un autre bloc `g`
+          // relance le timer sans re-flipper (sinon on repartirait à
+          // l'endroit sans le vouloir).
+          e.graviteInverse = true;
+          e.graviteInverseFin = t + 10000;
           e.derniereGravite = t;
           this.effets.push({ id: ++this.uid, type: 'gravite', x: e.x, y: e.y, at: t });
         }
