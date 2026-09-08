@@ -60,7 +60,7 @@
     !            C  !g    C                    C     l#                       r     C    T    T    T   T   T l                              # # # # # # #                                 C
  P  !    Z     Z    !          C    C    C        C  l#                        r rr r      C     C       C   l                              # # # # # # #             t      C          x x                    C               C         C
     !Z  Z  Z ZZ  Z Z!                                l#                              r                       l                              # # # # # # #               O    x     C  x     x  C     C    C    o o  o C    C o o      Co o    D
-#####               rr~r~~r~~r~r~~r~r~~r~r~~r~~r~~r~r##                               ###iiiiiiiiiiiiiiiiiii##                              # # # #t# # #           ##### xx   x x xx         xx x x x x  x x o   o   o o oo     o  o o   o#####
+#####               rrrrr~r~~r~r~~r~r~~r~r~~r~~r~~r~r##                               ###iiiiiiiiiiiiiiiiiii##                              # # # #t# # #           ##### xx   x x xx         xx x x x x  x x o   o   o o oo     o  o o   o#####
 
 [Le Piège]
 @theme nuit
