@@ -560,6 +560,14 @@ export class DevilLevelEngine {
     // le dessus au prochain calcul).
     if (e.graviteInverse && t >= e.graviteInverseFin) e.graviteInverse = false;
 
+    // Blocs invisibles : révélation PRÉVENTIVE (avant la physique) dans une
+    // boîte élargie autour du joueur. Sans ça, la révélation ne se déclenche
+    // qu'au premier chevauchement — la tuile devient solide, et au tick
+    // suivant `resoudreAxe` éjecte le joueur (encastré de plusieurs pixels
+    // à cause de la vitesse). En révélant un peu à l'avance, la tuile est
+    // solide DÈS ce tick et le contact est résolu par le rebond normal.
+    this.revelerInvisibles(e, t);
+
     // Horizontal.
     const vmax = VITESSE * (t < e.vitesse ? VITESSE_BOOST : 1) * (e.collant ? 0.55 : 1);
     let dir = 0;
@@ -709,6 +717,23 @@ export class DevilLevelEngine {
     // effectif de CE tick (majTuiles écrit `deltaX`) — jamais un cumul depuis le
     // dernier atterrissage, qui téléporterait le joueur au retour sur la plateforme.
     if (d.mobile === 'x') e.x += tu.deltaX ?? 0;
+  }
+
+  /**
+   * Passe préliminaire : révèle les blocs invisibles à portée AVANT que la
+   * physique ne s'applique. Marge de 12 px pour couvrir une vitesse normale
+   * (~16 px/tick en saut, ~30 en chute libre après trampoline). Le rare cas
+   * où le joueur pénètre malgré tout est rattrapé par `effetsDeTuiles`.
+   */
+  revelerInvisibles(e, t) {
+    const M = 12;
+    for (const tu of this.niveau.tuiles) {
+      const d = tu.def;
+      if (!d.invisible || tu.revelee) continue;
+      if (chevauche(e.x, e.y, JOUEUR_L, JOUEUR_H, tu.x - M, tu.y - M, tu.l + 2 * M, tu.h + 2 * M)) {
+        tu.revelee = t;
+      }
+    }
   }
 
   /**
