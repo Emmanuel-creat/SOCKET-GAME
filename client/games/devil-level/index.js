@@ -6,8 +6,8 @@
  * qu'une fois par manche — le réutiliser évite d'envoyer des centaines de
  * plateformes trente fois par seconde.
  *
- * Contrôles (AZERTY) : Q et D pour se déplacer, Z pour sauter, A pour le
- * dash, Maj pour utiliser un bonus offensif. Les flèches et Espace restent
+ * Contrôles (AZERTY) : Q et D pour se déplacer, Z pour sauter, Maj pour le
+ * dash, E pour utiliser un bonus offensif. Les flèches et Espace restent
  * acceptés comme secours. Les lettres sont lues via `e.key` (la lettre
  * réellement produite) et non `e.code`, sans quoi un clavier AZERTY
  * jouerait avec les mauvaises touches.
@@ -201,8 +201,8 @@ export class DevilLevelUI {
         h('div', { className: 'dl__aide' }, [
           h('div', {}, [h('b', {}, 'Q D'), ' se déplacer  (ou ← →)']),
           h('div', {}, [h('b', {}, 'Z'), ' sauter  (ou Espace)']),
-          h('div', {}, [h('b', {}, 'A'), ' dash']),
-          h('div', {}, [h('b', {}, 'Maj'), ' utiliser un bonus (gel, tornade, bombe)']),
+          h('div', {}, [h('b', {}, 'Maj'), ' dash']),
+          h('div', {}, [h('b', {}, 'E'), ' utiliser un bonus (gel, tornade, bombe)']),
         ]),
         h('button', { className: 'dl__btn dl__btn--jouer', type: 'button', onClick: () => this.lancer() }, '▶️ Lancer la course'),
       );
@@ -401,8 +401,8 @@ export class DevilLevelUI {
         if (!e.repeat) this.agir({ t: 'entree', patch: { saut: true } });
         return;
       }
-      if (kl === 'a') { e.preventDefault(); if (!e.repeat) this.agir({ t: 'dash' }); return; }
-      if (k === 'Shift') { e.preventDefault(); if (!e.repeat) this.agir({ t: 'pouvoir' }); return; }
+      if (k === 'Shift') { e.preventDefault(); if (!e.repeat) this.agir({ t: 'dash' }); return; }
+      if (kl === 'e') { e.preventDefault(); if (!e.repeat) this.agir({ t: 'pouvoir' }); return; }
       if (k === 'ArrowLeft' || k === 'ArrowRight') e.preventDefault();
       this.touches.add(kl);
       this.majDirection();
@@ -483,8 +483,8 @@ export class DevilLevelUI {
       chronoVisible ? h('span', { className: `dl__chrono${moi?.arrive ? ' dl__chrono--fini' : ''}` },
         `⏱️ ${formaterChrono(msChrono)}`) : null,
       h('span', { className: `dl__dash${dashPret ? ' dl__dash--pret' : ''}` },
-        dashPret ? '💨 Dash prêt (A)' : `💨 ${Math.round((moi?.dashRatio ?? 0) * 100)} %`),
-      moi?.bonus ? h('span', { className: 'dl__bonus' }, `${BONUS[moi.bonus].icone} ${BONUS[moi.bonus].nom} — touche Maj`) : null,
+        dashPret ? '💨 Dash prêt (Maj)' : `💨 ${Math.round((moi?.dashRatio ?? 0) * 100)} %`),
+      moi?.bonus ? h('span', { className: 'dl__bonus' }, `${BONUS[moi.bonus].icone} ${BONUS[moi.bonus].nom} — touche E`) : null,
       moi?.bouclier ? h('span', { className: 'dl__etat' }, '🛡️ Bouclier') : null,
       moi?.doubleSaut ? h('span', { className: 'dl__etat' }, '🦅 Double saut') : null,
       moi?.ghost ? h('span', { className: 'dl__etat' }, '👻 Ghost') : null,

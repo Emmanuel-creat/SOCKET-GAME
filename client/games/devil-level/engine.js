@@ -415,9 +415,10 @@ export class DevilLevelEngine {
 
     if (this.joueurs.every((j) => this.etats[j.id].arrive)) { this.finirManche(); return; }
 
-    // En solo, on ne coupe pas la manche au bout de 100 s : le joueur peut
-    // vouloir apprendre la carte, retrouver un chemin, ou simplement finir.
-    const tropLong = !this.solo && t - this.finDecompte > COURSE_MAX_MS;
+    // Plafond de manche retiré (solo comme multi) : les runs peuvent durer
+    // aussi longtemps qu'il le faut. `apresPremier` gère toujours la fin
+    // "un premier est arrivé, on n'attend que les autres" en multi.
+    const tropLong = false;
     const apresPremier = this.premierA && (t - this.premierA > DELAI_APRES_PREMIER_MS);
     if (tropLong || apresPremier) {
       const restants = this.joueurs
